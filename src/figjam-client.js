@@ -8,20 +8,25 @@
 import WebSocket from 'ws';
 
 export class FigJamClient {
-  constructor() {
+  constructor(port = null) {
     this.ws = null;
     this.contexts = [];
     this.figmaContextId = null;
     this.msgId = 0;
     this.callbacks = new Map();
     this.pageTitle = null;
+    this.port = port || FigJamClient.defaultPort || 9222;
   }
+
+  /** Set the default port for all new instances */
+  static defaultPort = 9222;
 
   /**
    * List all available FigJam pages
    */
-  static async listPages() {
-    const response = await fetch('http://localhost:9222/json');
+  static async listPages(port = null) {
+    const p = port || FigJamClient.defaultPort || 9222;
+    const response = await fetch(`http://localhost:${p}/json`);
     const pages = await response.json();
     return pages
       .filter(p => p.title.includes('FigJam'))
@@ -32,7 +37,7 @@ export class FigJamClient {
    * Connect to a FigJam page by title (partial match)
    */
   async connect(pageTitle) {
-    const response = await fetch('http://localhost:9222/json');
+    const response = await fetch(`http://localhost:${this.port}/json`);
     const pages = await response.json();
     const page = pages.find(p => p.title.includes(pageTitle) && p.title.includes('FigJam'));
 

@@ -11,6 +11,8 @@ import { createServer } from 'http';
 import { FigmaClient } from './figma-client.js';
 
 const PORT = parseInt(process.env.DAEMON_PORT) || 3456;
+const FIGMA_PORT = parseInt(process.env.FIGMA_DEBUG_PORT) || 9222;
+FigmaClient.defaultPort = FIGMA_PORT;
 
 let client = null;
 let isConnecting = false;

@@ -142,7 +142,7 @@ function startDaemon(forceRestart = false) {
   const child = spawn('node', [daemonScript], {
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, DAEMON_PORT: String(DAEMON_PORT) }
+    env: { ...process.env, DAEMON_PORT: String(DAEMON_PORT), FIGMA_DEBUG_PORT: String(figmaPort()) }
   });
   child.unref();
 
@@ -173,6 +173,110 @@ const IS_WINDOWS = platform() === 'win32';
 const IS_MAC = platform() === 'darwin';
 const IS_LINUX = platform() === 'linux';
 
+// ============ DYNAMIC PORT DETECTION ============
+
+const DEFAULT_DEBUG_PORT = 9222;
+let _detectedPort = null;
+
+/**
+ * Detect which port Figma's CDP debug server is running on.
+ * Tries: process args → common ports → lsof scan.
+ * Caches the result once found.
+ */
+function detectFigmaPort() {
+  if (_detectedPort) return _detectedPort;
+
+  // Method 1: Check Figma process args for --remote-debugging-port=XXXX
+  try {
+    if (IS_MAC || IS_LINUX) {
+      const ps = execSync('ps aux 2>/dev/null | grep -i "[F]igma" | grep "remote-debugging-port"', {
+        encoding: 'utf8', stdio: 'pipe', timeout: 3000
+      });
+      const portMatch = ps.match(/--remote-debugging-port=(\d+)/);
+      if (portMatch) {
+        const port = parseInt(portMatch[1]);
+        if (tryPort(port)) { _detectedPort = port; return port; }
+      }
+    } else if (IS_WINDOWS) {
+      const wmic = execSync('wmic process where "name=\'Figma.exe\'" get CommandLine 2>nul', {
+        encoding: 'utf8', stdio: 'pipe', timeout: 3000
+      });
+      const portMatch = wmic.match(/--remote-debugging-port=(\d+)/);
+      if (portMatch) {
+        const port = parseInt(portMatch[1]);
+        if (tryPort(port)) { _detectedPort = port; return port; }
+      }
+    }
+  } catch {}
+
+  // Method 2: Probe common CDP ports
+  const commonPorts = [9222, 9229, 9223, 9224, 9225, 9226];
+  for (const port of commonPorts) {
+    if (tryPort(port)) { _detectedPort = port; return port; }
+  }
+
+  // Method 3: (macOS/Linux) Scan Figma's listening ports via lsof
+  try {
+    if (IS_MAC || IS_LINUX) {
+      const lsof = execSync('lsof -i -P -n 2>/dev/null | grep -i "[F]igma" | grep LISTEN', {
+        encoding: 'utf8', stdio: 'pipe', timeout: 3000
+      });
+      const portMatches = [...lsof.matchAll(/:(\d+)\s/g)];
+      for (const match of portMatches) {
+        const port = parseInt(match[1]);
+        if (port >= 9000 && port <= 9999 && tryPort(port)) {
+          _detectedPort = port;
+          return port;
+        }
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
+/**
+ * Quick check: is this port serving the CDP /json endpoint?
+ */
+function tryPort(port) {
+  try {
+    const result = execSync(`curl -s -o /dev/null -w "%{http_code}" http://localhost:${port}/json`, {
+      encoding: 'utf8', stdio: 'pipe', timeout: 1500
+    });
+    return result.trim() === '200';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get the active Figma debug port. Returns cached value, or runs detection.
+ * Falls back to DEFAULT_DEBUG_PORT if nothing detected.
+ */
+function figmaPort() {
+  if (_detectedPort) return _detectedPort;
+  const found = detectFigmaPort();
+  return found || DEFAULT_DEBUG_PORT;
+}
+
+/**
+ * Reset detected port (e.g., after restarting Figma).
+ */
+function resetDetectedPort() {
+  _detectedPort = null;
+}
+
+/**
+ * Set the port explicitly (after starting Figma ourselves).
+ */
+function setFigmaPort(port) {
+  _detectedPort = port;
+  FigmaClient.defaultPort = port;
+  FigJamClient.defaultPort = port;
+}
+
+// ============ END PORT DETECTION ============
+
 // Platform-specific Figma paths and commands
 function getFigmaPath() {
   if (IS_MAC) {
@@ -186,15 +290,16 @@ function getFigmaPath() {
   }
 }
 
-function startFigma() {
+function startFigma(port = DEFAULT_DEBUG_PORT) {
   const figmaPath = getFigmaPath();
   if (IS_MAC) {
-    execSync('open -a Figma --args --remote-debugging-port=9222', { stdio: 'pipe' });
+    execSync(`open -a Figma --args --remote-debugging-port=${port}`, { stdio: 'pipe' });
   } else if (IS_WINDOWS) {
-    spawn(figmaPath, ['--remote-debugging-port=9222'], { detached: true, stdio: 'ignore' }).unref();
+    spawn(figmaPath, [`--remote-debugging-port=${port}`], { detached: true, stdio: 'ignore' }).unref();
   } else {
-    spawn(figmaPath, ['--remote-debugging-port=9222'], { detached: true, stdio: 'ignore' }).unref();
+    spawn(figmaPath, [`--remote-debugging-port=${port}`], { detached: true, stdio: 'ignore' }).unref();
   }
+  setFigmaPort(port);
 }
 
 function killFigma() {
@@ -212,12 +317,12 @@ function killFigma() {
 }
 
 /**
- * Check if Figma debug port (9222) is reachable.
+ * Check if Figma debug port is reachable (auto-detects port).
  * Returns: { connected: bool, hasDesignFile: bool, pages: [] }
  */
 function checkDebugPort() {
   try {
-    const result = execSync('curl -s http://localhost:9222/json', {
+    const result = execSync(`curl -s http://localhost:${figmaPort()}/json`, {
       encoding: 'utf8', stdio: 'pipe', timeout: 2000
     });
     const pages = JSON.parse(result);
@@ -283,17 +388,23 @@ function startFigmaUsePipeDaemon() {
 /**
  * Ensure Figma is reachable. NEVER kills Figma. Tries multiple connection methods:
  *
- * Tier 1: Check if port 9222 is already open (Figma running with debug flag)
+ * Tier 1: Detect Figma's debug port (scans process args, common ports, lsof)
  * Tier 2: Check if figma-use can connect (pipe daemon might be running)
  * Tier 3: If Figma not running → start with debug flag
  * Tier 4: If Figma running without debug → try pipe mode via figma-use
  * Tier 5: Guide user through manual setup
  */
 async function ensureFigmaRunning() {
-  // Tier 1: Port 9222 already open
-  const portStatus = checkDebugPort();
-  if (portStatus.connected) {
-    return { ok: true, status: portStatus, method: 'port' };
+  // Tier 1: Detect and connect to Figma's debug port
+  resetDetectedPort();
+  const detected = detectFigmaPort();
+  if (detected) {
+    setFigmaPort(detected);
+    const portStatus = checkDebugPort();
+    if (portStatus.connected) {
+      console.log(chalk.green(`  ✓ Found Figma on port ${detected}`));
+      return { ok: true, status: portStatus, method: 'port' };
+    }
   }
 
   // Tier 2: figma-use can connect (pipe daemon may already be running)
@@ -314,7 +425,7 @@ async function ensureFigmaRunning() {
       await new Promise(r => setTimeout(r, 1000));
       const check = checkDebugPort();
       if (check.connected) {
-        console.log(chalk.green('  ✓ Figma started with debug port'));
+        console.log(chalk.green(`  ✓ Figma started on port ${figmaPort()}`));
         return { ok: true, status: check, method: 'port' };
       }
     }
@@ -333,7 +444,7 @@ async function ensureFigmaRunning() {
     return { ok: true, status: checkDebugPort(), method: 'started' };
   }
 
-  // Tier 4: Figma IS running but port 9222 is not open → try pipe mode
+  // Tier 4: Figma IS running but no debug port detected → try pipe mode
   console.log(chalk.yellow('  Figma is running but debug port is not available.'));
   console.log(chalk.blue('  Trying pipe connection (no restart needed)...'));
   startFigmaUsePipeDaemon();
@@ -357,13 +468,13 @@ async function ensureFigmaRunning() {
   return { ok: false, reason: 'could-not-connect' };
 }
 
-function getManualStartCommand() {
+function getManualStartCommand(port = DEFAULT_DEBUG_PORT) {
   if (IS_MAC) {
-    return 'open -a Figma --args --remote-debugging-port=9222';
+    return `open -a Figma --args --remote-debugging-port=${port}`;
   } else if (IS_WINDOWS) {
-    return '"%LOCALAPPDATA%\\Figma\\Figma.exe" --remote-debugging-port=9222';
+    return `"%LOCALAPPDATA%\\Figma\\Figma.exe" --remote-debugging-port=${port}`;
   } else {
-    return 'figma --remote-debugging-port=9222';
+    return `figma --remote-debugging-port=${port}`;
   }
 }
 
@@ -394,7 +505,7 @@ async function navigateToFigmaFile(url) {
   }
 
   try {
-    const result = execSync('curl -s http://localhost:9222/json', {
+    const result = execSync(`curl -s http://localhost:${figmaPort()}/json`, {
       encoding: 'utf8', stdio: 'pipe', timeout: 2000
     });
     const pages = JSON.parse(result);
@@ -432,7 +543,7 @@ async function navigateToFigmaFile(url) {
       await new Promise(r => setTimeout(r, 3000));
 
       // Verify it opened
-      const check = execSync('curl -s http://localhost:9222/json', {
+      const check = execSync(`curl -s http://localhost:${figmaPort()}/json`, {
         encoding: 'utf8', stdio: 'pipe', timeout: 2000
       });
       const updated = JSON.parse(check);
@@ -529,7 +640,7 @@ function figmaEvalSync(code) {
     }
   }
 
-  // Try 2: Direct CDP connection via port 9222
+  // Try 2: Direct CDP connection via detected port
   const tempFile = join('/tmp', `figma-eval-${Date.now()}.mjs`);
   const resultFile = join('/tmp', `figma-result-${Date.now()}.json`);
 
@@ -604,7 +715,7 @@ function figmaUse(args, options = {}) {
 
   if (args === 'status' || args.startsWith('status')) {
     try {
-      const result = execSync('curl -s http://localhost:9222/json', { encoding: 'utf8', stdio: 'pipe' });
+      const result = execSync(`curl -s http://localhost:${figmaPort()}/json`, { encoding: 'utf8', stdio: 'pipe' });
       const pages = JSON.parse(result);
       const figmaPage = pages.find(p => p.url?.includes('figma.com/design') || p.url?.includes('figma.com/file'));
       if (figmaPage) {
@@ -673,8 +784,8 @@ function figmaUse(args, options = {}) {
 
 // Helper: Check connection
 async function checkConnection() {
-  // Try port 9222 first
-  const connected = await FigmaClient.isConnected();
+  // Try detected debug port first
+  const connected = await FigmaClient.isConnected(figmaPort());
   if (connected) return true;
 
   // Try figma-use (pipe mode or daemon)
@@ -688,9 +799,9 @@ async function checkConnection() {
 
 // Helper: Check connection (sync version for backwards compat)
 function checkConnectionSync() {
-  // Try port 9222 first
+  // Try detected debug port first
   try {
-    execSync('curl -s http://localhost:9222/json > /dev/null', { stdio: 'pipe', timeout: 2000 });
+    execSync(`curl -s http://localhost:${figmaPort()}/json > /dev/null`, { stdio: 'pipe', timeout: 2000 });
     return true;
   } catch {
     // Try figma-use as fallback
@@ -756,7 +867,7 @@ program.action(async () => {
     }
     console.log(chalk.green(`  ✓ Node.js ${nodeVersion}`));
 
-    // Step 2: Connect to Figma (tries port 9222 → pipe mode → start fresh)
+    // Step 2: Connect to Figma (detects port → pipe mode → start fresh)
     console.log(chalk.blue('\nStep 2/2: ') + 'Connecting to Figma...');
     const figmaResult = await ensureFigmaRunning();
 
@@ -912,14 +1023,14 @@ program
   .command('status')
   .description('Check connection to Figma')
   .action(() => {
-    // Try port 9222 first
+    // Try detected/default port first
     const portStatus = checkDebugPort();
     if (portStatus.connected) {
       if (portStatus.hasDesignFile) {
         const title = portStatus.designFile.title.replace(' – Figma', '');
-        console.log(chalk.green(`\n  ✓ Connected to Figma (port 9222)\n  File: ${title}\n`));
+        console.log(chalk.green(`\n  ✓ Connected to Figma (port ${figmaPort()})\n  File: ${title}\n`));
       } else {
-        console.log(chalk.green('\n  ✓ Connected to Figma (port 9222)'));
+        console.log(chalk.green(`\n  ✓ Connected to Figma (port ${figmaPort()})`));
         console.log(chalk.yellow('  No design file open. Open a file in Figma.\n'));
       }
       return;
@@ -940,7 +1051,7 @@ program
   .description('List all open Figma design files')
   .action(() => {
     try {
-      const result = execSync('curl -s http://localhost:9222/json', {
+      const result = execSync(`curl -s http://localhost:${figmaPort()}/json`, {
         encoding: 'utf8', stdio: 'pipe', timeout: 3000
       });
       const pages = JSON.parse(result);
@@ -980,7 +1091,7 @@ program
 
     try {
       // Navigate to drafts/new file via CDP
-      const result = execSync('curl -s http://localhost:9222/json', {
+      const result = execSync(`curl -s http://localhost:${figmaPort()}/json`, {
         encoding: 'utf8', stdio: 'pipe', timeout: 2000
       });
       const pages = JSON.parse(result);

@@ -8,19 +8,24 @@
 import WebSocket from 'ws';
 
 export class FigmaClient {
-  constructor() {
+  constructor(port = null) {
     this.ws = null;
     this.msgId = 0;
     this.callbacks = new Map();
     this.pageTitle = null;
     this.executionContextId = null; // For Figma v39+ sandboxed context
+    this.port = port || FigmaClient.defaultPort || 9222;
   }
+
+  /** Set the default port for all new instances */
+  static defaultPort = 9222;
 
   /**
    * List all available Figma pages
    */
-  static async listPages() {
-    const response = await fetch('http://localhost:9222/json');
+  static async listPages(port = null) {
+    const p = port || FigmaClient.defaultPort || 9222;
+    const response = await fetch(`http://localhost:${p}/json`);
     const pages = await response.json();
     return pages
       .filter(p => p.url && p.url.includes('figma.com'))
@@ -30,9 +35,10 @@ export class FigmaClient {
   /**
    * Check if Figma is running with debug port
    */
-  static async isConnected() {
+  static async isConnected(port = null) {
+    const p = port || FigmaClient.defaultPort || 9222;
     try {
-      const response = await fetch('http://localhost:9222/json');
+      const response = await fetch(`http://localhost:${p}/json`);
       const pages = await response.json();
       return pages.some(p => p.url && p.url.includes('figma.com'));
     } catch {
@@ -44,7 +50,7 @@ export class FigmaClient {
    * Connect to a Figma design file
    */
   async connect(pageTitle = null) {
-    const response = await fetch('http://localhost:9222/json');
+    const response = await fetch(`http://localhost:${this.port}/json`);
     const pages = await response.json();
 
     // Find design/file pages (not feed, home, etc.)
