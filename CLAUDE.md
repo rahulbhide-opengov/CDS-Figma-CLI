@@ -199,7 +199,13 @@ Below is the complete mapping. User says the LEFT side. You silently run the RIG
 | "New file called [Name]" | `node src/index.js new-file "[Name]"` |
 | "Switch to a different file" / "Use this file instead" | Ask for URL or new file name, then `connect` or `new-file` |
 
-**IMPORTANT:** The `connect` command NEVER closes or restarts Figma. It only connects to what's already running. If Figma isn't running, it starts it. If it's already running, it reuses the connection.
+**IMPORTANT:** The `connect` command NEVER closes or restarts Figma. It tries these methods in order:
+1. **Port 9222** — if Figma is already running with the debug flag
+2. **Pipe mode** — uses `figma-use daemon --pipe` (works even without patching, Figma 126+)
+3. **Start fresh** — if Figma isn't running, starts it with the debug flag
+4. **Guide user** — if all else fails, shows clear manual steps
+
+No patching or Full Disk Access is required for the pipe method to work. The CLI will never kill or restart an active Figma session.
 
 **IMPORTANT:** Once a file is selected, **stick with it for the entire session**. Never re-ask, never switch unless the user explicitly requests it.
 
@@ -651,14 +657,13 @@ Once user shares a URL:
 node src/index.js connect "https://www.figma.com/design/abc123/My-File"
 ```
 
-This command **NEVER closes, kills, or restarts Figma**. It only:
-- Checks if Figma's debug port is reachable
-- If Figma isn't running at all → starts it (fresh start, no kill)
-- If Figma is running without debug port → asks user to quit and reopen manually
-- If Figma is running with debug port → uses it as-is
-- Navigates to the specific file from the URL
+This command **NEVER closes, kills, or restarts Figma**. It tries multiple connection methods automatically:
+1. **Port 9222** — fastest, works if Figma was started with `--remote-debugging-port=9222`
+2. **Pipe mode** — uses `figma-use daemon start --pipe`, works on Figma 126+ without patching
+3. **Fresh start** — if Figma isn't running, starts it with the debug flag
+4. **User guide** — if nothing works, shows clear instructions
 
-If permission error → user needs Full Disk Access (see below).
+No patching or Full Disk Access is required for the pipe method. The CLI will never kill Figma.
 
 ### Step 4: Confirm and show examples
 When connected, show:
@@ -697,9 +702,11 @@ Then run the CLI:
 node src/index.js connect
 ```
 
-## IMPORTANT: macOS Full Disk Access
+## IMPORTANT: macOS Full Disk Access (Only for Patch Method)
 
-If you see "permission" or "EPERM" error, Terminal needs Full Disk Access:
+Full Disk Access is ONLY needed if you want to patch Figma for the port 9222 method. The pipe method (`figma-use daemon --pipe`) works without any patching.
+
+If you choose to patch and see "permission" or "EPERM" error:
 
 1. Open **System Settings**
 2. Go to **Privacy & Security → Full Disk Access**
@@ -787,6 +794,13 @@ Figma must be running. Then:
 node src/index.js connect
 ```
 
+The `connect` command automatically detects the best connection method:
+1. Port 9222 (if Figma was started with `--remote-debugging-port=9222`)
+2. Pipe mode via `figma-use daemon --pipe` (works on Figma 126+ without patching)
+3. Starts Figma fresh if not running
+
+**No patching, no Full Disk Access, no killing Figma required.**
+
 ## Speed Daemon (Auto-Start)
 
 The `connect` command automatically starts a background daemon that keeps the WebSocket connection open. This makes all subsequent commands ~10x faster.
@@ -794,8 +808,7 @@ The `connect` command automatically starts a background daemon that keeps the We
 ```bash
 node src/index.js connect
 # Output:
-# ✓ Figma started
-# ✓ Connected to Figma
+# ✓ Connected to Figma (port 9222 or pipe mode)
 # ✓ Speed daemon running (commands are now 10x faster)
 ```
 

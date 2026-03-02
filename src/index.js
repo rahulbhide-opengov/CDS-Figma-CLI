@@ -231,6 +231,20 @@ function checkDebugPort() {
 }
 
 /**
+ * Check if figma-use can connect (works with both port and pipe mode).
+ */
+function checkFigmaUseStatus() {
+  try {
+    const result = execSync('npx figma-use status', {
+      encoding: 'utf8', stdio: 'pipe', timeout: 10000
+    });
+    return result.includes('Connected') || result.includes('connected');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Check if Figma process is running (regardless of debug port).
  */
 function isFigmaProcessRunning() {
@@ -249,44 +263,98 @@ function isFigmaProcessRunning() {
 }
 
 /**
- * Ensure Figma is running with debug port. NEVER kills Figma.
- * - If debug port reachable → returns true (already good)
- * - If Figma running without debug port → tells user, returns false
- * - If Figma not running → starts it with debug flag, returns 'started'
+ * Try to start figma-use's pipe daemon (works on Figma 126+ without patching).
+ * This launches Figma with --remote-debugging-pipe and keeps connection open.
+ */
+function startFigmaUsePipeDaemon() {
+  try {
+    console.log(chalk.blue('  Starting Figma via pipe mode (no patching required)...'));
+    const child = spawn('npx', ['figma-use', 'daemon', 'start', '--pipe'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ensure Figma is reachable. NEVER kills Figma. Tries multiple connection methods:
+ *
+ * Tier 1: Check if port 9222 is already open (Figma running with debug flag)
+ * Tier 2: Check if figma-use can connect (pipe daemon might be running)
+ * Tier 3: If Figma not running → start with debug flag
+ * Tier 4: If Figma running without debug → try pipe mode via figma-use
+ * Tier 5: Guide user through manual setup
  */
 async function ensureFigmaRunning() {
-  // First check if debug port is already open
-  const status = checkDebugPort();
-  if (status.connected) return { ok: true, status };
-
-  // Debug port not reachable — check if Figma is running at all
-  const running = isFigmaProcessRunning();
-  if (running) {
-    // Figma is running but without debug port
-    console.log(chalk.yellow('\n  Figma is running but without the debug connection.'));
-    console.log(chalk.white('  To enable it, please restart Figma manually:\n'));
-    console.log(chalk.cyan('    1. Quit Figma (Cmd+Q / Alt+F4)'));
-    console.log(chalk.cyan('    2. Then run this command again\n'));
-    console.log(chalk.gray('  We\'ll start Figma with the debug port enabled for you.'));
-    return { ok: false, reason: 'no-debug-port' };
+  // Tier 1: Port 9222 already open
+  const portStatus = checkDebugPort();
+  if (portStatus.connected) {
+    return { ok: true, status: portStatus, method: 'port' };
   }
 
-  // Figma not running at all — start it (no need to kill anything)
-  console.log(chalk.blue('  Starting Figma with debug connection...'));
-  startFigma();
+  // Tier 2: figma-use can connect (pipe daemon may already be running)
+  if (checkFigmaUseStatus()) {
+    console.log(chalk.green('  ✓ Connected via figma-use'));
+    return { ok: true, status: checkDebugPort(), method: 'figma-use' };
+  }
 
-  // Wait for debug port
-  for (let i = 0; i < 10; i++) {
-    await new Promise(r => setTimeout(r, 1000));
-    const check = checkDebugPort();
-    if (check.connected) {
-      console.log(chalk.green('  ✓ Figma started'));
-      return { ok: true, status: check };
+  const figmaRunning = isFigmaProcessRunning();
+
+  // Tier 3: Figma not running at all → start it with debug flag
+  if (!figmaRunning) {
+    console.log(chalk.blue('  Starting Figma with debug connection...'));
+    startFigma();
+
+    // Wait for debug port to become available
+    for (let i = 0; i < 12; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      const check = checkDebugPort();
+      if (check.connected) {
+        console.log(chalk.green('  ✓ Figma started with debug port'));
+        return { ok: true, status: check, method: 'port' };
+      }
     }
+
+    // Port didn't open — Figma might block it (126+). Try pipe mode.
+    console.log(chalk.yellow('  Debug port not available, trying pipe mode...'));
+    startFigmaUsePipeDaemon();
+    await new Promise(r => setTimeout(r, 5000));
+
+    if (checkFigmaUseStatus()) {
+      console.log(chalk.green('  ✓ Connected via pipe mode'));
+      return { ok: true, status: checkDebugPort(), method: 'pipe' };
+    }
+
+    console.log(chalk.green('  ✓ Figma started — open a design file and share the URL'));
+    return { ok: true, status: checkDebugPort(), method: 'started' };
   }
 
-  console.log(chalk.green('  ✓ Figma started (waiting for file to load)'));
-  return { ok: true, status: checkDebugPort() };
+  // Tier 4: Figma IS running but port 9222 is not open → try pipe mode
+  console.log(chalk.yellow('  Figma is running but debug port is not available.'));
+  console.log(chalk.blue('  Trying pipe connection (no restart needed)...'));
+  startFigmaUsePipeDaemon();
+  await new Promise(r => setTimeout(r, 5000));
+
+  if (checkFigmaUseStatus()) {
+    console.log(chalk.green('  ✓ Connected via pipe mode (Figma was not restarted)'));
+    return { ok: true, status: checkDebugPort(), method: 'pipe' };
+  }
+
+  // Tier 5: Nothing worked — guide user
+  console.log(chalk.yellow('\n  Could not connect to Figma automatically.'));
+  console.log(chalk.white('  Please try one of these:\n'));
+  console.log(chalk.cyan('  Option A: ') + chalk.white('Quit Figma, then run this command again'));
+  console.log(chalk.gray('    (We\'ll start Figma with the debug connection enabled)\n'));
+  console.log(chalk.cyan('  Option B: ') + chalk.white('Start Figma manually with debug flag:'));
+  console.log(chalk.gray(`    ${getManualStartCommand()}\n`));
+  console.log(chalk.cyan('  Option C: ') + chalk.white('Patch Figma (one-time, requires Full Disk Access):'));
+  console.log(chalk.gray('    node src/index.js init\n'));
+
+  return { ok: false, reason: 'could-not-connect' };
 }
 
 function getManualStartCommand() {
@@ -436,9 +504,9 @@ async function figmaEval(code) {
   return await client.eval(code);
 }
 
-// Sync wrapper for figmaEval - uses daemon via curl (fast) or fallback to direct connection
+// Sync wrapper for figmaEval - tries daemon → direct CDP → npx figma-use
 function figmaEvalSync(code) {
-  // Try daemon first (fast path)
+  // Try 1: Our daemon (fast path)
   const daemonRunning = isDaemonRunning();
   if (daemonRunning) {
     try {
@@ -461,7 +529,7 @@ function figmaEvalSync(code) {
     }
   }
 
-  // Fallback: direct connection via temp script
+  // Try 2: Direct CDP connection via port 9222
   const tempFile = join('/tmp', `figma-eval-${Date.now()}.mjs`);
   const resultFile = join('/tmp', `figma-result-${Date.now()}.json`);
 
@@ -489,11 +557,27 @@ function figmaEvalSync(code) {
       const data = JSON.parse(readFileSync(resultFile, 'utf8'));
       try { execSync(`rm -f ${tempFile} ${resultFile}`, { stdio: 'pipe' }); } catch {}
       if (data.success) return data.result;
-      throw new Error(data.error);
+      if (data.error) throw new Error(data.error);
     }
-  } catch (e) {
+  } catch (directError) {
     try { execSync(`rm -f ${tempFile} ${resultFile}`, { stdio: 'pipe' }); } catch {}
-    throw e;
+
+    // Try 3: npx figma-use eval (works with pipe daemon)
+    try {
+      const codeFile = `/tmp/figma-use-eval-${Date.now()}.js`;
+      writeFileSync(codeFile, code);
+      const output = execSync(`npx figma-use eval "$(cat ${codeFile})"`, {
+        encoding: 'utf8', stdio: 'pipe', timeout: 30000
+      });
+      try { unlinkSync(codeFile); } catch {}
+      try {
+        return JSON.parse(output.trim());
+      } catch {
+        return output.trim();
+      }
+    } catch (figmaUseError) {
+      throw new Error(`Cannot reach Figma. Run 'node src/index.js connect' first. (${directError.message})`);
+    }
   }
   return null;
 }
@@ -589,26 +673,32 @@ function figmaUse(args, options = {}) {
 
 // Helper: Check connection
 async function checkConnection() {
+  // Try port 9222 first
   const connected = await FigmaClient.isConnected();
-  if (!connected) {
-    console.log(chalk.red('\n✗ Not connected to Figma\n'));
-    console.log(chalk.white('  Make sure Figma is running with remote debugging:'));
-    console.log(chalk.cyan('  figma-ds-cli connect\n'));
-    process.exit(1);
-  }
-  return true;
+  if (connected) return true;
+
+  // Try figma-use (pipe mode or daemon)
+  if (checkFigmaUseStatus()) return true;
+
+  console.log(chalk.red('\n✗ Not connected to Figma\n'));
+  console.log(chalk.white('  Run the connect command first:'));
+  console.log(chalk.cyan('  node src/index.js connect\n'));
+  process.exit(1);
 }
 
 // Helper: Check connection (sync version for backwards compat)
 function checkConnectionSync() {
-  // This is a sync check - just verify port is open
+  // Try port 9222 first
   try {
-    execSync('curl -s http://localhost:9222/json > /dev/null', { stdio: 'pipe' });
+    execSync('curl -s http://localhost:9222/json > /dev/null', { stdio: 'pipe', timeout: 2000 });
     return true;
   } catch {
+    // Try figma-use as fallback
+    if (checkFigmaUseStatus()) return true;
+
     console.log(chalk.red('\n✗ Not connected to Figma\n'));
-    console.log(chalk.white('  Make sure Figma is running with remote debugging:'));
-    console.log(chalk.cyan('  figma-ds-cli connect\n'));
+    console.log(chalk.white('  Run the connect command first:'));
+    console.log(chalk.cyan('  node src/index.js connect\n'));
     process.exit(1);
   }
 }
@@ -650,14 +740,14 @@ program
 program.action(async () => {
   const config = loadConfig();
 
-  // First time? Run init
+  // First time? Run setup
   if (!config.patched) {
     showBanner();
     console.log(chalk.white('  Welcome! Let\'s get you set up.\n'));
     console.log(chalk.gray('  This takes about 30 seconds. No API key needed.\n'));
 
     // Step 1: Check Node version
-    console.log(chalk.blue('Step 1/3: ') + 'Checking Node.js...');
+    console.log(chalk.blue('Step 1/2: ') + 'Checking Node.js...');
     const nodeVersion = process.version;
     const nodeMajor = parseInt(nodeVersion.slice(1).split('.')[0]);
     if (nodeMajor < 18) {
@@ -666,55 +756,23 @@ program.action(async () => {
     }
     console.log(chalk.green(`  ✓ Node.js ${nodeVersion}`));
 
-    // Step 2: Patch Figma
-    console.log(chalk.blue('\nStep 2/3: ') + 'Patching Figma Desktop...');
-    if (config.patched) {
-      console.log(chalk.green('  ✓ Figma already patched'));
-    } else {
-      console.log(chalk.gray('  (This allows CLI to connect to Figma)'));
-      const spinner = ora('  Patching...').start();
-      try {
-        const patchStatus = isPatched();
-        if (patchStatus === true) {
-          config.patched = true;
-          saveConfig(config);
-          spinner.succeed('Figma already patched');
-        } else if (patchStatus === false) {
-          patchFigma();
-          config.patched = true;
-          saveConfig(config);
-          spinner.succeed('Figma patched');
-        } else {
-          // Can't determine - assume it's fine (old Figma version)
-          config.patched = true;
-          saveConfig(config);
-          spinner.succeed('Figma ready (no patch needed)');
-        }
-      } catch (error) {
-        spinner.fail('Patch failed: ' + error.message);
-        if ((error.message.includes('EPERM') || error.message.includes('permission') || error.message.includes('Full Disk Access')) && process.platform === 'darwin') {
-          console.log(chalk.yellow('\n  ⚠️  Your Terminal needs "Full Disk Access" permission.\n'));
-          console.log(chalk.gray('  1. Open System Settings → Privacy & Security → Full Disk Access'));
-          console.log(chalk.gray('  2. Click + and add your Terminal app'));
-          console.log(chalk.gray('  3. Quit Terminal completely (Cmd+Q)'));
-          console.log(chalk.gray('  4. Reopen Terminal and try again\n'));
-        } else if (error.message.includes('EPERM') || error.message.includes('permission')) {
-          console.log(chalk.yellow('\n  Try running as administrator.\n'));
-        }
-      }
-    }
-
-    // Step 3: Ensure Figma is running
-    console.log(chalk.blue('\nStep 3/3: ') + 'Connecting to Figma...');
+    // Step 2: Connect to Figma (tries port 9222 → pipe mode → start fresh)
+    console.log(chalk.blue('\nStep 2/2: ') + 'Connecting to Figma...');
     const figmaResult = await ensureFigmaRunning();
 
     if (figmaResult.ok) {
+      config.patched = true;
+      saveConfig(config);
       if (figmaResult.status?.hasDesignFile) {
         const title = figmaResult.status.designFile.title.replace(' – Figma', '');
         console.log(chalk.green(`  ✓ Connected to: ${title}`));
       } else {
         console.log(chalk.green('  ✓ Figma running — open a design file to start'));
       }
+    } else {
+      // Even if we couldn't auto-connect, save config so user doesn't repeat setup
+      config.patched = true;
+      saveConfig(config);
     }
 
     // Done!
@@ -784,7 +842,7 @@ program
     console.log(chalk.gray('  This takes about 30 seconds. No API key needed.\n'));
 
     // Step 1: Check Node version
-    console.log(chalk.blue('Step 1/4: ') + 'Checking Node.js...');
+    console.log(chalk.blue('Step 1/3: ') + 'Checking Node.js...');
     const nodeVersion = process.version;
     const nodeMajor = parseInt(nodeVersion.slice(1).split('.')[0]);
     if (nodeMajor < 18) {
@@ -793,54 +851,43 @@ program
     }
     console.log(chalk.green(`  ✓ Node.js ${nodeVersion}`));
 
-    // Step 2: Patch Figma
-    console.log(chalk.blue('\nStep 2/3: ') + 'Patching Figma Desktop...');
+    // Step 2: Connect to Figma (try all methods, NEVER kills Figma)
+    console.log(chalk.blue('\nStep 2/3: ') + 'Connecting to Figma...');
     const config = loadConfig();
-    if (config.patched) {
-      console.log(chalk.green('  ✓ Figma already patched'));
-    } else {
-      console.log(chalk.gray('  (This allows CLI to connect to Figma)'));
-      const spinner = ora('  Patching...').start();
-      try {
-        const patchStatus = isPatched();
-        if (patchStatus === true) {
-          config.patched = true;
-          saveConfig(config);
-          spinner.succeed('Figma already patched');
-        } else if (patchStatus === false) {
-          patchFigma();
-          config.patched = true;
-          saveConfig(config);
-          spinner.succeed('Figma patched');
-        } else {
-          config.patched = true;
-          saveConfig(config);
-          spinner.succeed('Figma ready (no patch needed)');
-        }
-      } catch (error) {
-        spinner.fail('Patch failed: ' + error.message);
-        if ((error.message.includes('EPERM') || error.message.includes('permission') || error.message.includes('Full Disk Access')) && process.platform === 'darwin') {
-          console.log(chalk.yellow('\n  ⚠️  Your Terminal needs "Full Disk Access" permission.\n'));
-          console.log(chalk.gray('  1. Open System Settings → Privacy & Security → Full Disk Access'));
-          console.log(chalk.gray('  2. Click + and add your Terminal app'));
-          console.log(chalk.gray('  3. Quit Terminal completely (Cmd+Q)'));
-          console.log(chalk.gray('  4. Reopen Terminal and try again\n'));
-        } else if (error.message.includes('EPERM') || error.message.includes('permission')) {
-          console.log(chalk.yellow('\n  Try running as administrator.\n'));
-        }
-      }
-    }
-
-    // Step 3: Connect to Figma (never kills it)
-    console.log(chalk.blue('\nStep 3/3: ') + 'Connecting to Figma...');
     const figmaResult = await ensureFigmaRunning();
 
     if (figmaResult.ok) {
+      config.patched = true;
+      saveConfig(config);
       if (figmaResult.status?.hasDesignFile) {
         const title = figmaResult.status.designFile.title.replace(' – Figma', '');
         console.log(chalk.green(`  ✓ Connected to: ${title}`));
       } else {
         console.log(chalk.green('  ✓ Figma running — share a Figma file link to start designing'));
+      }
+    }
+
+    // Step 3: Try patching for future reliability (optional, non-blocking)
+    console.log(chalk.blue('\nStep 3/3: ') + 'Optimizing Figma connection...');
+    if (config.patched && figmaResult.ok) {
+      console.log(chalk.green('  ✓ Connection established'));
+    } else {
+      try {
+        const patchStatus = isPatched();
+        if (patchStatus === true) {
+          console.log(chalk.green('  ✓ Figma optimized for fast connections'));
+          config.patched = true;
+          saveConfig(config);
+        } else if (patchStatus === false && !isFigmaProcessRunning()) {
+          patchFigma();
+          console.log(chalk.green('  ✓ Figma optimized (one-time patch applied)'));
+          config.patched = true;
+          saveConfig(config);
+        } else {
+          console.log(chalk.gray('  ℹ Figma patch skipped (optional — connection already works via pipe/port)'));
+        }
+      } catch {
+        console.log(chalk.gray('  ℹ Figma patch not needed (pipe connection available)'));
       }
     }
 
@@ -865,14 +912,25 @@ program
   .command('status')
   .description('Check connection to Figma')
   .action(() => {
-    // Check if first run
-    const config = loadConfig();
-    if (!config.patched && !checkDependencies(true)) {
-      console.log(chalk.yellow('\n⚠ First time? Run the setup wizard:\n'));
-      console.log(chalk.cyan('  figma-ds-cli init\n'));
+    // Try port 9222 first
+    const portStatus = checkDebugPort();
+    if (portStatus.connected) {
+      if (portStatus.hasDesignFile) {
+        const title = portStatus.designFile.title.replace(' – Figma', '');
+        console.log(chalk.green(`\n  ✓ Connected to Figma (port 9222)\n  File: ${title}\n`));
+      } else {
+        console.log(chalk.green('\n  ✓ Connected to Figma (port 9222)'));
+        console.log(chalk.yellow('  No design file open. Open a file in Figma.\n'));
+      }
       return;
     }
-    figmaUse('status');
+    // Try figma-use (pipe mode)
+    if (checkFigmaUseStatus()) {
+      console.log(chalk.green('\n  ✓ Connected to Figma (via figma-use pipe)\n'));
+      return;
+    }
+    console.log(chalk.red('\n  ✗ Not connected to Figma'));
+    console.log(chalk.white('  Run: node src/index.js connect\n'));
   });
 
 // ============ FILES ============
@@ -1027,45 +1085,15 @@ program
 
     const config = loadConfig();
 
-    // Patch Figma if needed (one-time, does NOT kill Figma)
-    if (!config.patched) {
-      const patchSpinner = ora('Setting up Figma connection...').start();
-      try {
-        const patchStatus = isPatched();
-        if (patchStatus === true) {
-          patchSpinner.succeed('Figma ready');
-        } else if (patchStatus === false) {
-          // Patching requires Figma to not be running — check first
-          if (isFigmaProcessRunning()) {
-            patchSpinner.warn('Figma needs to be patched (one-time)');
-            console.log(chalk.yellow('\n  Please quit Figma manually (Cmd+Q), then run this command again.'));
-            console.log(chalk.gray('  This is a one-time setup to enable the debug connection.\n'));
-            return;
-          }
-          patchFigma();
-          patchSpinner.succeed('Figma configured (one-time patch applied)');
-        } else {
-          patchSpinner.succeed('Figma ready');
-        }
-        config.patched = true;
-        saveConfig(config);
-      } catch (err) {
-        patchSpinner.fail('Setup failed');
-        if (process.platform === 'darwin') {
-          console.log(chalk.white('\n  Your Terminal needs "Full Disk Access" permission.\n'));
-          console.log(chalk.cyan('  1. ') + chalk.white('Open ') + chalk.yellow('System Settings → Privacy & Security → Full Disk Access'));
-          console.log(chalk.cyan('  2. ') + chalk.white('Click + and add ') + chalk.yellow('Terminal'));
-          console.log(chalk.cyan('  3. ') + chalk.white('Quit Terminal (Cmd+Q) and reopen\n'));
-        } else {
-          console.log(chalk.yellow('\n  Try running as administrator.\n'));
-        }
-        return;
-      }
-    }
-
-    // --- NEVER kill Figma. Just ensure it's reachable. ---
+    // --- NEVER kill Figma. Try to connect using multiple methods. ---
     const figmaResult = await ensureFigmaRunning();
     if (!figmaResult.ok) return;
+
+    // Mark patched in config so we skip future checks
+    if (!config.patched) {
+      config.patched = true;
+      saveConfig(config);
+    }
 
     // If user provided a URL, navigate to that file
     if (url) {

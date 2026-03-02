@@ -110,18 +110,43 @@ The included `CLAUDE.md` teaches Claude all commands automatically. No manual re
 
 Connects to Figma Desktop via Chrome DevTools Protocol (CDP). No API key needed because it uses your existing Figma session.
 
+The CLI tries multiple connection methods automatically:
+
 ```
+Method 1: Port 9222 (fastest)
 ┌─────────────┐      WebSocket (CDP)      ┌─────────────┐
 │ figma-ds-cli │ ◄───────────────────────► │   Figma     │
 │    (CLI)    │      localhost:9222       │  Desktop    │
 └─────────────┘                           └─────────────┘
+
+Method 2: Pipe mode (works on Figma 126+, no patching needed)
+┌─────────────┐      figma-use daemon     ┌─────────────┐
+│ figma-ds-cli │ ◄────── (pipe) ─────────► │   Figma     │
+│    (CLI)    │                           │  Desktop    │
+└─────────────┘                           └─────────────┘
 ```
+
+**The CLI never kills or restarts Figma.** If Figma is already open, it connects to it.
 
 ---
 
 ## Troubleshooting
 
+### Can't Connect to Figma
+
+The CLI automatically tries port 9222 and pipe mode. If both fail:
+
+**Option A: Quit Figma, then run `connect` again** (CLI will start Figma with the debug flag)
+
+**Option B: Start Figma manually with the debug flag:**
+```bash
+# macOS
+open -a Figma --args --remote-debugging-port=9222
+```
+
 ### Permission Error When Patching (macOS)
+
+Patching is optional — pipe mode works without it. If you want to use the patch method:
 
 If you see `EPERM: operation not permitted, open '.../app.asar'`:
 
