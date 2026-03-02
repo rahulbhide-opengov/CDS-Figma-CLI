@@ -93,6 +93,46 @@ This CLI includes the **CDS (Corporate Design System)** with 322 tokens and 26 r
 
 ---
 
+## CRITICAL: Design System Setup (First Time Per File)
+
+**Before creating any components**, run the design system setup once per Figma file. This creates the variables, text styles, and dark mode that components will bind to.
+
+```bash
+node src/index.js ds setup
+```
+
+This single command does:
+1. **Pushes all 322 tokens** as Figma Variables (organized into collections: Colors, Typography, Spacing, Sizing, Border Radius, Elevation, Components)
+2. **Creates Figma Text Styles** (heading/h1–h6, body/large–small, label, caption, button sizes)
+3. **Adds dark mode** to the color collection
+
+### When to run `ds setup`:
+- **First time** you connect to a new Figma file → run it automatically
+- **User says** "set up the design system" / "push tokens" / "initialize" → run it
+- **If bindings fail** (components show "No variables found") → run it again
+
+### Automatic Binding
+After `ds setup` is done, every component you create with `ds create` will **automatically**:
+- Bind fill colors to Figma Color Variables (e.g., `colors/primary/main`)
+- Bind stroke colors to Figma Color Variables (e.g., `colors/border/default`)
+- Bind corner radii to Figma Float Variables (e.g., `border-radius/button`)
+- Apply Figma Text Styles to text layers (e.g., `DS/button/medium`)
+
+This means: change a variable value in Figma → all components using it update automatically.
+
+### Manual Binding & Component Conversion
+- `node src/index.js ds bind "Frame Name"` — bind an existing frame to variables
+- `node src/index.js ds to-component "Frame Name"` — convert a frame into a reusable Figma Component
+
+| User says | You run |
+|-----------|---------|
+| "Set up the design system" / "Initialize tokens" / "Push variables" | `node src/index.js ds setup` |
+| "Bind this frame to the design system" | `node src/index.js ds bind "Frame Name"` |
+| "Make this a component" / "Convert to component" | `node src/index.js ds to-component "Frame Name"` |
+| "Set up without dark mode" | `node src/index.js ds setup --skip-dark` |
+
+---
+
 ## IMPORTANT: What Users Say → What You Run
 
 Below is the complete mapping. User says the LEFT side. You silently run the RIGHT side. Never expose the command.

@@ -15,6 +15,7 @@ import { FigmaClient } from './figma-client.js';
 import { isPatched, patchFigma, unpatchFigma, getFigmaCommand } from './figma-patch.js';
 import dsEngine from './ds-engine.js';
 import componentRegistry from './component-registry.js';
+import dsBinder from './ds-binder.js';
 
 // Daemon configuration
 const DAEMON_PORT = 3456;
@@ -4421,6 +4422,21 @@ ds
       const result = JSON.parse(output.trim());
       spinner.succeed(`${comp.name} created: ${result.id}`);
       if (result.name) console.log(chalk.gray(`  name: ${result.name}`));
+
+      // Post-creation: bind to variables and text styles
+      const frameName = result.name || comp.name;
+      const bindSpinner = ora('  Binding to design system variables...').start();
+      try {
+        const bindCode = dsBinder.generateBindingCode(frameName);
+        const bindResult = figmaEvalSync(bindCode);
+        if (bindResult && !String(bindResult).includes('not found')) {
+          bindSpinner.succeed(`  ${String(bindResult).trim()}`);
+        } else {
+          bindSpinner.info('  No variables found to bind (run "ds setup" first to push tokens)');
+        }
+      } catch (e) {
+        bindSpinner.info('  Binding skipped (run "ds setup" to push tokens first)');
+      }
     } catch (e) {
       console.log(chalk.red(`\n  Failed to create ${comp.name}: ${e.stderr || e.message}\n`));
     }
@@ -4482,6 +4498,117 @@ ds
       spinner.succeed(`${comp.name} showcase: ${count} variants created`);
     } catch (e) {
       spinner.fail(`Showcase failed: ${e.message}`);
+    }
+  });
+
+// ds setup - full design system initialization (tokens + styles + dark mode)
+ds
+  .command('setup')
+  .description('Full design system setup: push all tokens as variables, create text styles, add dark mode')
+  .option('--skip-dark', 'Skip dark mode creation')
+  .action(async (options) => {
+    await checkConnection();
+    console.log(chalk.white('\n  Setting up CDS Design System in Figma...\n'));
+
+    // Step 1: Push all token variables
+    const step1 = ora('Step 1/3: Pushing design tokens as Figma variables...').start();
+    const categoryMap = {
+      colors: { collection: 'DS - Colors', category: 'colors' },
+      typography: { collection: 'DS - Typography', category: 'typography' },
+      spacing: { collection: 'DS - Spacing', category: 'spacing' },
+      sizing: { collection: 'DS - Sizing', category: 'sizing' },
+      borderRadius: { collection: 'DS - Border Radius', category: 'borderRadius' },
+      elevation: { collection: 'DS - Elevation', category: 'elevation' },
+      components: { collection: 'DS - Components', category: 'components' },
+    };
+
+    let totalVars = 0;
+    for (const [, config] of Object.entries(categoryMap)) {
+      try {
+        const code = dsEngine.generateFigmaVariableCode(config.category, config.collection);
+        if (!code) continue;
+        const result = figmaEvalSync(code);
+        if (result) {
+          const match = String(result).match(/Created (\d+)/);
+          if (match) totalVars += parseInt(match[1]);
+        }
+      } catch {}
+    }
+    step1.succeed(`Step 1/3: ${totalVars} variables created`);
+
+    // Step 2: Create text styles
+    const step2 = ora('Step 2/3: Creating text styles...').start();
+    try {
+      const textCode = dsBinder.generateTextStylesCode();
+      const textResult = figmaEvalSync(textCode);
+      step2.succeed(`Step 2/3: ${String(textResult).trim()}`);
+    } catch (e) {
+      step2.warn('Step 2/3: Text styles skipped — ' + e.message);
+    }
+
+    // Step 3: Dark mode
+    if (!options.skipDark) {
+      const step3 = ora('Step 3/3: Adding dark mode...').start();
+      try {
+        const darkCode = dsEngine.generateDarkModeCode('DS - Colors');
+        if (darkCode) {
+          const darkResult = figmaEvalSync(darkCode);
+          step3.succeed(`Step 3/3: ${String(darkResult).trim()}`);
+        } else {
+          step3.info('Step 3/3: No dark mode tokens found');
+        }
+      } catch (e) {
+        step3.warn('Step 3/3: Dark mode skipped — ' + e.message);
+      }
+    } else {
+      console.log(chalk.gray('  Step 3/3: Dark mode skipped (--skip-dark)'));
+    }
+
+    console.log(chalk.green('\n  ✓ Design system setup complete!'));
+    console.log(chalk.gray('  All components you create will now be linked to these variables and styles.\n'));
+  });
+
+// ds bind [frameName] - manually bind a frame to design system variables
+ds
+  .command('bind [frameName]')
+  .description('Bind an existing frame\'s colors, strokes, and text to design system variables')
+  .action(async (frameName) => {
+    await checkConnection();
+
+    if (!frameName) {
+      console.log(chalk.yellow('\n  Provide a frame name to bind. Example: ds bind "Button/contained/medium"\n'));
+      return;
+    }
+
+    const spinner = ora(`Binding "${frameName}" to design system...`).start();
+    try {
+      const code = dsBinder.generateBindingCode(frameName);
+      const result = figmaEvalSync(code);
+      spinner.succeed(String(result).trim());
+    } catch (e) {
+      spinner.fail('Binding failed: ' + e.message);
+    }
+  });
+
+// ds to-component [frameName] - convert a frame to a Figma component
+ds
+  .command('to-component [frameName]')
+  .description('Convert a created frame into a reusable Figma Component')
+  .action(async (frameName) => {
+    await checkConnection();
+
+    if (!frameName) {
+      console.log(chalk.yellow('\n  Provide a frame name. Example: ds to-component "Button/contained/medium"\n'));
+      return;
+    }
+
+    const spinner = ora(`Converting "${frameName}" to component...`).start();
+    try {
+      const code = dsBinder.generateComponentConversionCode(frameName);
+      const result = figmaEvalSync(code);
+      spinner.succeed(String(result).trim());
+    } catch (e) {
+      spinner.fail('Conversion failed: ' + e.message);
     }
   });
 
