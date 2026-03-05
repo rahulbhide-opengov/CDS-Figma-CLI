@@ -14,7 +14,7 @@ import { FigJamClient } from './figjam-client.js';
 import { FigmaClient } from './figma-client.js';
 import { isPatched, patchFigma, unpatchFigma, getFigmaCommand } from './figma-patch.js';
 import dsEngine from './ds-engine.js';
-import componentRegistry from './component-registry.js';
+import componentRegistry, { extractTextWeights } from './component-registry.js';
 import dsBinder from './ds-binder.js';
 
 // Daemon configuration
@@ -4586,6 +4586,7 @@ async function runDsSetup(options = {}) {
 
       const batchSize = 8;
       let rendered = 0;
+      const allJsxStrings = [];
 
       for (let i = 0; i < coreComponents.length; i += batchSize) {
         const batch = coreComponents.slice(i, i + batchSize);
@@ -4593,7 +4594,11 @@ async function runDsSetup(options = {}) {
         for (const compInfo of batch) {
           try {
             const comp = componentRegistry.getComponent(compInfo.key);
-            if (comp) jsxBatch.push(comp.render({}));
+            if (comp) {
+              const jsx = comp.render({});
+              jsxBatch.push(jsx);
+              allJsxStrings.push(jsx);
+            }
           } catch {}
         }
 
@@ -4627,6 +4632,23 @@ async function runDsSetup(options = {}) {
   }
   return 'Converted ' + converted;
 })()`);
+        } catch {}
+
+        step4.text = `Step ${currentStep}/${totalSteps}: Applying CDS typography to components...`;
+        try {
+          const allFrames = figmaEvalSync(`(function() {
+  return figma.currentPage.children
+    .filter(n => n.type === 'FRAME' || n.type === 'COMPONENT')
+    .map(n => n.id).join(',');
+})()`);
+          if (allFrames) {
+            const allWeights = allJsxStrings.flatMap(jsx => extractTextWeights(jsx));
+            for (const fid of String(allFrames).split(',')) {
+              if (fid.trim()) {
+                try { figmaEvalSync(dsBinder.generateTypographyFixCode(fid.trim(), allWeights)); } catch {}
+              }
+            }
+          }
         } catch {}
 
         step4.text = `Step ${currentStep}/${totalSteps}: Binding components to CDS variables...`;
@@ -4792,6 +4814,24 @@ ds
 
         spinner.succeed(`${comp.name} created at Desktop, Tablet, Mobile`);
         console.log(chalk.gray('  3 responsive variants placed side by side'));
+
+        // Fix typography on the rendered frames
+        try {
+          const recentIds = figmaEvalSync(`(function() {
+  var nodes = figma.currentPage.children;
+  return nodes.slice(-3).map(n => n.id).join(',');
+})()`);
+          if (recentIds) {
+            for (let j = 0; j < String(recentIds).split(',').length; j++) {
+              const fid = String(recentIds).split(',')[j].trim();
+              const bpJsx = jsxList[j] || jsxList[0];
+              const bpWeights = extractTextWeights(bpJsx);
+              if (fid) {
+                try { figmaEvalSync(dsBinder.generateTypographyFixCode(fid, bpWeights)); } catch {}
+              }
+            }
+          }
+        } catch {}
         return;
       }
 
@@ -4821,6 +4861,17 @@ ds
       const result = JSON.parse(output.trim());
       spinner.succeed(`${comp.name}${bpLabel} created: ${result.id}`);
       if (result.name) console.log(chalk.gray(`  name: ${result.name}`));
+
+      // Fix typography (weight, lineHeight, letterSpacing) from CDS tokens
+      const typoSpinner = ora('  Applying CDS typography (weights, line-height, letter-spacing)...').start();
+      try {
+        const textWeights = extractTextWeights(jsx);
+        const typoCode = dsBinder.generateTypographyFixCode(result.id, textWeights);
+        const typoResult = figmaEvalSync(typoCode);
+        typoSpinner.succeed(`  ${String(typoResult).trim()}`);
+      } catch (e) {
+        typoSpinner.info('  Typography fix skipped');
+      }
 
       const frameName = result.name || comp.name;
       const bindSpinner = ora('  Binding to design system variables...').start();

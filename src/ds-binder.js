@@ -280,6 +280,158 @@ export function generateBindingCode(frameName) {
 /**
  * Generate code to convert a frame into a Figma Component.
  */
+/**
+ * Generate Figma eval code that fixes lineHeight and letterSpacing on all
+ * text nodes inside a rendered frame, matching by fontSize + fontWeight
+ * to CDS typography tokens.
+ *
+ * figma-use only sets font, size, weight, color — this post-render step
+ * applies the remaining CDS typography properties.
+ */
+/**
+ * @param {string} nodeId - Figma node ID of the rendered frame
+ * @param {Array<{fontSize:number, weight:string, textStart:string}>} [textWeights]
+ *   Optional array of intended weights extracted from JSX via extractTextWeights().
+ *   When provided, the fix uses these to set the correct font weight.
+ */
+export function generateTypographyFixCode(nodeId, textWeights = []) {
+  const { categories } = loadTokens();
+  const typo = categories.typography;
+
+  const exact = {};    // "fontSize|weight" → { lineHeight, letterSpacing, weight }
+  const styleNames = new Set();
+  for (const key of Object.keys(typo)) {
+    const match = key.match(/^--typography\/(.+)\/font-size$/);
+    if (match) styleNames.add(match[1]);
+  }
+
+  // Process specialized styles first so common ones overwrite them
+  const specializedFirst = [...styleNames].sort((a, b) => {
+    const priority = (n) => {
+      if (n.startsWith('body/') || n.startsWith('heading/') || n.startsWith('button/')) return 10;
+      if (n.startsWith('subtitle/') || n.startsWith('display/')) return 8;
+      if (n.startsWith('dialog/') || n.startsWith('alert/') || n.startsWith('helper-text') || n.startsWith('caption')) return 5;
+      return 0; // chip, avatar, table, input, etc — lowest priority
+    };
+    return priority(a) - priority(b);
+  });
+
+  for (const name of specializedFirst) {
+    const fs = typo[`--typography/${name}/font-size`];
+    const fw = typo[`--typography/${name}/font-weight`];
+    const lh = typo[`--typography/${name}/line-height`];
+    const ls = typo[`--typography/${name}/letter-spacing`];
+    if (!fs || !fw) continue;
+    const fsNum = parseInt(fs);
+    const entry = {
+      weight: fw,
+      lineHeight: lh ? parseFloat(lh) : null,
+      letterSpacing: ls ? parseFloat(ls) : null,
+    };
+    exact[`${fsNum}|${fw}`] = entry;
+  }
+
+  const exactJson = JSON.stringify(exact);
+  const hintsJson = JSON.stringify(textWeights);
+
+  // CDS font family: DM Sans
+  // Weight map: 300→Light, 400→Regular, 500→Medium, 600→SemiBold, 700→Bold
+  return `(async function() {
+  await figma.loadFontAsync({ family: 'DM Sans', style: 'Regular' });
+  await figma.loadFontAsync({ family: 'DM Sans', style: 'Medium' });
+  await figma.loadFontAsync({ family: 'DM Sans', style: 'SemiBold' });
+  await figma.loadFontAsync({ family: 'DM Sans', style: 'Bold' });
+
+  var node = figma.getNodeById(${JSON.stringify(nodeId)});
+  if (!node) {
+    var allNodes = figma.currentPage.children;
+    for (var i = allNodes.length - 1; i >= 0; i--) {
+      if (allNodes[i].type === 'FRAME' || allNodes[i].type === 'COMPONENT') {
+        node = allNodes[i];
+        break;
+      }
+    }
+  }
+  if (!node) return 'No frame found';
+
+  var exact = ${exactJson};
+  var hints = ${hintsJson};
+  var fixed = 0;
+
+  var weightToStyle = {
+    '300': 'Regular', '400': 'Regular', '500': 'Medium',
+    '600': 'SemiBold', '700': 'Bold',
+    'bold': 'Bold', 'medium': 'Medium', 'semibold': 'SemiBold'
+  };
+
+  var textNodes = [];
+  function collectText(n) {
+    if (n.type === 'TEXT') textNodes.push(n);
+    if (n.children) n.children.forEach(collectText);
+  }
+  collectText(node);
+
+  for (var i = 0; i < textNodes.length; i++) {
+    var t = textNodes[i];
+    try {
+      var fs = t.fontSize;
+      var intendedWeight = '400';
+      var hintMatched = false;
+
+      // Match by text content and font size from JSX hints
+      if (hints.length > 0) {
+        var textContent = t.characters.substring(0, 15);
+        for (var h = 0; h < hints.length; h++) {
+          if (hints[h].fontSize === fs && textContent.indexOf(hints[h].textStart.substring(0, 8)) === 0) {
+            intendedWeight = hints[h].weight;
+            hints.splice(h, 1);
+            hintMatched = true;
+            break;
+          }
+        }
+        if (!hintMatched) {
+          for (var h = 0; h < hints.length; h++) {
+            if (hints[h].fontSize === fs) {
+              intendedWeight = hints[h].weight;
+              hints.splice(h, 1);
+              hintMatched = true;
+              break;
+            }
+          }
+        }
+      }
+
+      var key = fs + '|' + intendedWeight;
+      var entry = exact[key];
+
+      var targetWeight = intendedWeight;
+      if (entry) {
+        targetWeight = entry.weight;
+      }
+
+      var targetStyle = weightToStyle[targetWeight] || 'Regular';
+      var currentStyle = (t.fontName && t.fontName.style) ? t.fontName.style : 'Regular';
+
+      if (currentStyle !== targetStyle) {
+        t.fontName = { family: 'DM Sans', style: targetStyle };
+      }
+
+      if (entry) {
+        if (entry.lineHeight !== null && entry.lineHeight > 0) {
+          t.lineHeight = { unit: 'PIXELS', value: entry.lineHeight };
+        }
+        if (entry.letterSpacing !== null) {
+          t.letterSpacing = { unit: 'PIXELS', value: entry.letterSpacing };
+        }
+      }
+      fixed++;
+    } catch(e) {}
+  }
+
+  return 'Fixed typography on ' + fixed + ' text nodes';
+})()`;
+}
+
 export function generateComponentConversionCode(frameName) {
   const lines = [`(function() {`];
   lines.push(`  const frame = figma.currentPage.children`);
@@ -307,6 +459,7 @@ export default {
   buildTypographyMap,
   generateTextStylesCode,
   generateBindingCode,
+  generateTypographyFixCode,
   generateComponentConversionCode,
   generateFullSetupSteps,
 };

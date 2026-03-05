@@ -49,6 +49,31 @@ const p = (name) => responsivePx(name, _activeBreakpoint);
 const CDS_FONT = 'DM Sans';
 const F = CDS_FONT;
 
+/**
+ * Parse rendered JSX to extract intended weight for each text node.
+ * Returns array of { fontSize, weight, textStart } for the post-render fix.
+ * Handles any attribute order: size, weight, color, w, font, etc.
+ */
+export function extractTextWeights(jsx) {
+  const weights = [];
+  const re = /<Text\s([^>]+)>([^<]{1,40})/g;
+  let m;
+  while ((m = re.exec(jsx)) !== null) {
+    const attrs = m[1];
+    const text = m[2];
+    const sizeMatch = attrs.match(/size=\{(\d+)\}/);
+    const weightMatch = attrs.match(/weight="([^"]+)"/);
+    if (sizeMatch) {
+      weights.push({
+        fontSize: parseInt(sizeMatch[1]),
+        weight: weightMatch ? weightMatch[1] : '400',
+        textStart: text.substring(0, 15),
+      });
+    }
+  }
+  return weights;
+}
+
 function colors() {
   return {
     primary: h('--colors/primary/main'),
@@ -274,7 +299,7 @@ components.select = {
     const dropdownJsx = open
       ? `\n  <Frame name="Dropdown" w="fill" flex="col" bg="${c.bgPaper}" rounded={${r}} stroke="${c.border}" strokeWidth={1} shadow="0 4 12 #0000001a">
 ${options.map(opt => `    <Frame w="fill" h={40} flex="row" items="center" px={12}>
-      <Text font="${F}" size={14} color="${c.textPrimary}">${opt}</Text>
+      <Text font="${F}" weight="400" size={14} color="${c.textPrimary}">${opt}</Text>
     </Frame>`).join('\n')}
   </Frame>`
       : '';
@@ -282,8 +307,8 @@ ${options.map(opt => `    <Frame w="fill" h={40} flex="row" items="center" px={1
     return `<Frame name="Select" w={280} flex="col" gap={4}>
   <Text font="${F}" size={14} weight="400" color="${c.textSecondary}">${label}</Text>
   <Frame w="fill" h={32} flex="row" items="center" px={12} bg="${c.bgPaper}" stroke="${c.border}" strokeWidth={1} rounded={${r}} gap={8}>
-    <Text font="${F}" size={14} color="${c.textDisabled}" w="fill">${placeholder}</Text>
-    <Text font="${F}" size={12} color="${c.textSecondary}">▼</Text>
+    <Text font="${F}" weight="400" size={14} color="${c.textDisabled}" w="fill">${placeholder}</Text>
+    <Text font="${F}" weight="400" size={12} color="${c.textSecondary}">▼</Text>
   </Frame>${dropdownJsx}
 </Frame>`;
   }
@@ -305,7 +330,7 @@ components.checkbox = {
   <Frame w={20} h={20} rounded={2} stroke="${boxColor}" strokeWidth={2} bg="${bg}" flex="row" items="center" justify="center">
     ${checked ? `<Text font="${F}" size={14} weight="700" color="#ffffff">✓</Text>` : ''}
   </Frame>
-  <Text font="${F}" size={14} color="${disabled ? c.textDisabled : c.textPrimary}">${label}</Text>
+  <Text font="${F}" weight="400" size={14} color="${disabled ? c.textDisabled : c.textPrimary}">${label}</Text>
 </Frame>`;
   }
 };
@@ -327,7 +352,7 @@ components.radio = {
     <Frame w={20} h={20} rounded={20} stroke="${ringColor}" strokeWidth={2} flex="row" items="center" justify="center">
       ${isSelected ? `<Frame w={10} h={10} bg="${c.primary}" rounded={10} />` : ''}
     </Frame>
-    <Text font="${F}" size={14} color="${c.textPrimary}">${opt}</Text>
+    <Text font="${F}" weight="400" size={14} color="${c.textPrimary}">${opt}</Text>
   </Frame>`;
     }).join('\n');
 
@@ -354,7 +379,7 @@ components.switch = {
   <Frame w={42} h={22} bg="${trackColor}" rounded={11} px={2} flex="row" items="center">
     <Frame w={18} h={18} bg="${thumbColor}" rounded={18} shadow="0 1 3 #00000033" />
   </Frame>
-  <Text font="${F}" size={14} color="${disabled ? c.textDisabled : c.textPrimary}">${label}</Text>
+  <Text font="${F}" weight="400" size={14} color="${disabled ? c.textDisabled : c.textPrimary}">${label}</Text>
 </Frame>`;
   }
 };
@@ -480,7 +505,7 @@ components.card = {
     const strokeAttr = variant === 'outlined' ? ` stroke="${c.border}" strokeWidth={1}` : '';
     const shadowAttr = variant === 'elevated' ? ' shadow="0 2 4 #0000001a"' : '';
     const subtitleJsx = subtitle
-      ? `\n    <Text font="${F}" size={12} color="${c.textSecondary}" w="fill">${subtitle}</Text>`
+      ? `\n    <Text font="${F}" weight="400" size={12} color="${c.textSecondary}" w="fill">${subtitle}</Text>`
       : '';
     const actionsJsx = hasActions
       ? `\n  <Frame name="Actions" w="fill" flex="row" gap={8} justify="end" pt={8}>
@@ -493,7 +518,7 @@ components.card = {
   <Frame name="Header" w="fill" flex="col" gap={4}>
     <Text font="${F}" size={${parseInt(h3['font-size'] || '20')}} weight="${h3['font-weight'] || '600'}" color="${c.textPrimary}" w="fill">${title}</Text>${subtitleJsx}
   </Frame>
-  <Text font="${F}" size={14} color="${c.textSecondary}" w="fill">${body}</Text>${actionsJsx}
+  <Text font="${F}" weight="400" size={14} color="${c.textSecondary}" w="fill">${body}</Text>${actionsJsx}
 </Frame>`;
   }
 };
@@ -522,7 +547,7 @@ components.dialog = {
       <Text font="${F}" size={${parseInt(dialogTypo['font-size'] || '20')}} weight="${dialogTypo['font-weight'] || '600'}" color="${c.textPrimary}" w="fill">${title}</Text>
     </Frame>
     <Frame name="Content" w="fill" flex="col" px={${contentPad}} pb={${contentPad}}>
-      <Text font="${F}" size={14} color="${c.textSecondary}" w="fill">${body}</Text>
+      <Text font="${F}" weight="400" size={14} color="${c.textSecondary}" w="fill">${body}</Text>
     </Frame>
     <Frame name="Actions" w="fill" h={${actionsH}} flex="row" items="center" justify="end" px={${contentPad}} gap={${actionsSpacing}}>
       ${components.button.render({ variant: 'text', size: 'medium', label: cancelLabel })}
@@ -554,13 +579,13 @@ components.alert = {
       ? `\n    <Text font="${F}" size={${parseInt(alertTitleTypo['font-size'] || '18')}} weight="${alertTitleTypo['font-weight'] || '600'}" color="${fg}">${title}</Text>`
       : '';
     const closeJsx = hasClose
-      ? `\n  <Text font="${F}" size={18} color="${fg}" opacity={0.6}>✕</Text>`
+      ? `\n  <Text font="${F}" weight="400" size={18} color="${fg}" opacity={0.6}>✕</Text>`
       : '';
 
     return `<Frame name="Alert/${severity}" w={400} flex="row" items="start" px={16} py={12} bg="${bg}" rounded={${r}} gap={12}>
-  <Text font="${F}" size={22} color="${fg}">ℹ</Text>
+  <Text font="${F}" weight="400" size={22} color="${fg}">ℹ</Text>
   <Frame flex="col" gap={4} grow={1}>${titleJsx}
-    <Text font="${F}" size={14} color="${fg}" w="fill">${message}</Text>
+    <Text font="${F}" weight="400" size={14} color="${fg}" w="fill">${message}</Text>
   </Frame>${closeJsx}
 </Frame>`;
   }
@@ -604,7 +629,7 @@ components.snackbar = {
       : '';
 
     return `<Frame name="Snackbar" w={${w}} h={${minH}} flex="row" items="center" px={${pxVal}} bg="${c.grey900}" rounded={4} gap={8}>
-  <Text font="${F}" size={14} color="#ffffff" w="fill">${message}</Text>${actionJsx}
+  <Text font="${F}" weight="400" size={14} color="#ffffff" w="fill">${message}</Text>${actionJsx}
 </Frame>`;
   }
 };
@@ -683,7 +708,7 @@ components.list = {
     </Frame>
     <Frame flex="col" gap={2} grow={1}>
       <Text font="${F}" size={14} weight="500" color="${c.textPrimary}">${item.primary}</Text>
-      <Text font="${F}" size={12} color="${c.textSecondary}">${item.secondary}</Text>
+      <Text font="${F}" weight="400" size={12} color="${c.textSecondary}">${item.secondary}</Text>
     </Frame>
   </Frame>`
     ).join('\n');
@@ -802,8 +827,8 @@ components.breadcrumb = {
     const crumbs = items.map((item, i) => {
       const isLast = i === items.length - 1;
       const color = isLast ? c.textPrimary : c.textSecondary;
-      const separator = isLast ? '' : `\n    <Text font="${F}" size={14} color="${c.textDisabled}">/</Text>`;
-      return `  <Text font="${F}" size={14} color="${color}" weight="${isLast ? '500' : '400'}">${item}</Text>${separator}`;
+      const separator = isLast ? '' : `\n    <Text font="${F}" weight="400" size={14} color="${c.textDisabled}">/</Text>`;
+      return `  <Text font="${F}" weight="400" size={14} color="${color}" weight="${isLast ? '500' : '400'}">${item}</Text>${separator}`;
     }).join('\n');
 
     return `<Frame name="Breadcrumb" flex="row" items="center" gap={${itemSpacing}}>
@@ -906,7 +931,7 @@ components.timeline = {
     </Frame>
     <Frame flex="col" gap={4} pb={${isLast ? 0 : spacing_v}}>
       <Text font="${F}" size={14} weight="600" color="${c.textPrimary}">${ev.title}</Text>
-      <Text font="${F}" size={12} color="${c.textSecondary}">${ev.description}</Text>
+      <Text font="${F}" weight="400" size={12} color="${c.textSecondary}">${ev.description}</Text>
     </Frame>
   </Frame>`;
     }).join('\n');
@@ -946,7 +971,7 @@ components.datatable = {
       `  <Frame name="Row ${ri + 1}" w="fill" flex="row" stroke="${c.border}" strokeWidth={1}>
 ${row.map((cell, ci) =>
       `    <Frame w={${colW}} h={${rowH}} flex="row" items="center" px={${cellPx}}>
-      <Text font="${F}" size={14} color="${c.textPrimary}">${cell}</Text>
+      <Text font="${F}" weight="400" size={14} color="${c.textPrimary}">${cell}</Text>
     </Frame>`
     ).join('\n')}
   </Frame>`
@@ -990,7 +1015,7 @@ components.datepicker = {
         const bg = isSelected ? c.primary : 'transparent';
         const textColor = isSelected ? '#ffffff' : c.textPrimary;
         return `      <Frame w={${daySize}} h={${daySize}} flex="row" items="center" justify="center" bg="${bg}" rounded={${daySize}}>
-        <Text font="${F}" size={14} color="${textColor}">${d}</Text>
+        <Text font="${F}" weight="400" size={14} color="${textColor}">${d}</Text>
       </Frame>`;
       }).join('\n');
       dayRows.push(`    <Frame flex="row">\n${row}\n    </Frame>`);
@@ -998,9 +1023,9 @@ components.datepicker = {
 
     return `<Frame name="DatePicker" w={${calW}} flex="col" bg="${c.bgPaper}" rounded={${radius('dialog')}} stroke="${c.border}" strokeWidth={1} shadow="0 4 12 #0000001a" overflow="hidden">
   <Frame name="Header" w="fill" h={${headerH}} flex="row" items="center" justify="center" px={16} gap={8}>
-    <Text font="${F}" size={14} color="${c.textSecondary}">◀</Text>
+    <Text font="${F}" weight="400" size={14} color="${c.textSecondary}">◀</Text>
     <Text font="${F}" size={16} weight="600" color="${c.textPrimary}" w="fill">${month}</Text>
-    <Text font="${F}" size={14} color="${c.textSecondary}">▶</Text>
+    <Text font="${F}" weight="400" size={14} color="${c.textSecondary}">▶</Text>
   </Frame>
   <Frame name="Weekdays" w="fill" flex="row" px={8}>
 ${weekdayJsx}
@@ -1032,7 +1057,7 @@ components.pageheading = {
       ? `\n  <Frame flex="row" gap={8}>\n${chips.map(ch => `    ${components.chip.render({ label: ch, variant: 'filled' })}`).join('\n')}\n  </Frame>`
       : '';
     const descJsx = description
-      ? `\n  <Text font="${F}" size={14} color="${c.textSecondary}" w="fill">${description}</Text>`
+      ? `\n  <Text font="${F}" weight="400" size={14} color="${c.textSecondary}" w="fill">${description}</Text>`
       : '';
     const actionsJsx = hasActions
       ? `\n  <Frame flex="row" gap={8}>
@@ -1058,7 +1083,7 @@ components.sectionheading = {
   render({ title = 'Section Title', description = '', hasAction = false, actionLabel = 'View All' } = {}) {
     const c = colors();
     const descJsx = description
-      ? `\n  <Text font="${F}" size={14} color="${c.textSecondary}" w="fill">${description}</Text>`
+      ? `\n  <Text font="${F}" weight="400" size={14} color="${c.textSecondary}" w="fill">${description}</Text>`
       : '';
     const actionJsx = hasAction
       ? `\n  ${components.button.render({ variant: 'text', size: 'small', label: actionLabel })}`
@@ -1126,14 +1151,14 @@ components.accordion = {
     const sections = items.map(item => {
       const contentJsx = item.expanded
         ? `\n    <Frame w="fill" flex="col" px={16} pb={16}>
-      <Text font="${F}" size={14} color="${c.textSecondary}" w="fill">${item.content}</Text>
+      <Text font="${F}" weight="400" size={14} color="${c.textSecondary}" w="fill">${item.content}</Text>
     </Frame>`
         : '';
 
       return `  <Frame name="AccordionItem" w="fill" flex="col" stroke="${c.border}" strokeWidth={1}>
     <Frame w="fill" h={48} flex="row" items="center" px={16} gap={8}>
       <Text font="${F}" size={14} weight="500" color="${c.textPrimary}" w="fill">${item.title}</Text>
-      <Text font="${F}" size={14} color="${c.textSecondary}">${item.expanded ? '▲' : '▼'}</Text>
+      <Text font="${F}" weight="400" size={14} color="${c.textSecondary}">${item.expanded ? '▲' : '▼'}</Text>
     </Frame>${contentJsx}
   </Frame>`;
     }).join('\n');
@@ -1200,7 +1225,7 @@ components.paper = {
     const strokeAttr = variant === 'outlined' ? ` stroke="${c.border}" strokeWidth={1}` : '';
 
     return `<Frame name="Paper/${variant}" w={${width}} h={${height}} bg="${c.bgPaper}" rounded={${r}}${strokeAttr}${shadow} p={${spacing(4)}}>
-  ${content ? `<Text font="${F}" size={14} color="${c.textPrimary}" w="fill">${content}</Text>` : ''}
+  ${content ? `<Text font="${F}" weight="400" size={14} color="${c.textPrimary}" w="fill">${content}</Text>` : ''}
 </Frame>`;
   }
 };
@@ -1274,7 +1299,7 @@ components.autocomplete = {
     const dropdownJsx = open
       ? `\n  <Frame name="Dropdown" w="fill" flex="col" bg="${c.bgPaper}" rounded={${r}} stroke="${c.border}" strokeWidth={1} shadow="0 4 12 #0000001a">
 ${options.map(opt => `    <Frame w="fill" h={40} flex="row" items="center" px={12}>
-      <Text font="${F}" size={14} color="${c.textPrimary}">${opt}</Text>
+      <Text font="${F}" weight="400" size={14} color="${c.textPrimary}">${opt}</Text>
     </Frame>`).join('\n')}
   </Frame>`
       : '';
@@ -1282,8 +1307,8 @@ ${options.map(opt => `    <Frame w="fill" h={40} flex="row" items="center" px={1
     return `<Frame name="Autocomplete" w={280} flex="col" gap={4}>
   <Text font="${F}" size={14} weight="400" color="${c.textSecondary}">${label}</Text>
   <Frame w="fill" h={32} flex="row" items="center" px={12} bg="${c.bgPaper}" stroke="${c.border}" strokeWidth={1} rounded={${r}} gap={8}>
-    <Text font="${F}" size={14} color="${c.textDisabled}" w="fill">${placeholder}</Text>
-    <Text font="${F}" size={12} color="${c.textSecondary}">▼</Text>
+    <Text font="${F}" weight="400" size={14} color="${c.textDisabled}" w="fill">${placeholder}</Text>
+    <Text font="${F}" weight="400" size={12} color="${c.textSecondary}">▼</Text>
   </Frame>${dropdownJsx}
 </Frame>`;
   }
@@ -1302,10 +1327,10 @@ components.fileupload = {
 
     return `<Frame name="FileUpload" w={400} h={180} flex="col" items="center" justify="center" gap={12} p={32} bg="${c.bgPaper}" rounded={${r}} stroke="${c.primary}" strokeWidth={2}>
   <Frame w={48} h={48} bg="${c.primary200}" rounded={24} flex="row" items="center" justify="center">
-    <Text font="${F}" size={24} color="${c.primary}">↑</Text>
+    <Text font="${F}" weight="400" size={24} color="${c.primary}">↑</Text>
   </Frame>
-  <Text font="${F}" size={14} color="${c.textSecondary}" w="fill">${text}</Text>
-  <Text font="${F}" size={12} color="${c.textDisabled}">Max file size: ${maxSize}${multiple ? ' • Multiple files allowed' : ''}</Text>
+  <Text font="${F}" weight="400" size={14} color="${c.textSecondary}" w="fill">${text}</Text>
+  <Text font="${F}" weight="400" size={12} color="${c.textDisabled}">Max file size: ${maxSize}${multiple ? ' • Multiple files allowed' : ''}</Text>
 </Frame>`;
   }
 };
@@ -1383,7 +1408,7 @@ components.menu = {
       const isDanger = item.toLowerCase() === 'delete' || item.toLowerCase() === 'remove';
       const textColor = isDanger ? c.error : c.textPrimary;
       return `  <Frame w="fill" h={48} flex="row" items="center" px={16} gap={12} bg="${bg}">
-    <Text font="${F}" size={14} color="${textColor}">${item}</Text>
+    <Text font="${F}" weight="400" size={14} color="${textColor}">${item}</Text>
   </Frame>`;
     }).join('\n');
 
@@ -1417,11 +1442,11 @@ components.pagination = {
 
     return `<Frame name="Pagination" flex="row" items="center" gap={4}>
   <Frame w={${itemSize}} h={${itemSize}} rounded={${r}} flex="row" items="center" justify="center">
-    <Text font="${F}" size={14} color="${c.textSecondary}">‹</Text>
+    <Text font="${F}" weight="400" size={14} color="${c.textSecondary}">‹</Text>
   </Frame>
 ${pageItems}
   <Frame w={${itemSize}} h={${itemSize}} rounded={${r}} flex="row" items="center" justify="center">
-    <Text font="${F}" size={14} color="${c.textSecondary}">›</Text>
+    <Text font="${F}" weight="400" size={14} color="${c.textSecondary}">›</Text>
   </Frame>
 </Frame>`;
   }
@@ -1474,7 +1499,7 @@ components.imagelist = {
 
     const images = Array.from({ length: items }, (_, i) =>
       `  <Frame w={${itemW}} h={${itemHeight}} bg="${c.grey200}" rounded={4} flex="row" items="center" justify="center">
-    <Text font="${F}" size={12} color="${c.textDisabled}">Image ${i + 1}</Text>
+    <Text font="${F}" weight="400" size={12} color="${c.textDisabled}">Image ${i + 1}</Text>
   </Frame>`
     ).join('\n');
 
@@ -1618,7 +1643,7 @@ components.loginform = {
       : '';
     const signUpJsx = hasSignUp
       ? `\n    <Frame w="fill" flex="row" items="center" justify="center" gap={4}>
-      <Text font="${F}" size={14} color="${c.textSecondary}">Don't have an account?</Text>
+      <Text font="${F}" weight="400" size={14} color="${c.textSecondary}">Don't have an account?</Text>
       <Text font="${F}" size={14} weight="500" color="${c.primary}">Sign Up</Text>
     </Frame>`
       : '';
@@ -1632,7 +1657,7 @@ components.loginform = {
     ${components.button.render({ variant: 'contained', size: 'large', label: 'Sign In', color: 'primary' })}
     <Frame w="fill" flex="row" items="center" gap={8}>
       <Frame h={1} bg="${c.divider}" grow={1} />
-      <Text font="${F}" size={12} color="${c.textDisabled}">OR</Text>
+      <Text font="${F}" weight="400" size={12} color="${c.textDisabled}">OR</Text>
       <Frame h={1} bg="${c.divider}" grow={1} />
     </Frame>${signUpJsx}
 </Frame>`;
@@ -1704,8 +1729,8 @@ components.profilecard = {
   ${components.avatar.render({ size: 'large', initials: name.split(' ').map(n => n[0]).join('') })}
   <Frame flex="col" items="center" gap={4}>
     <Text font="${F}" size={20} weight="600" color="${c.textPrimary}">${name}</Text>
-    <Text font="${F}" size={14} color="${c.textSecondary}">${role}</Text>
-    <Text font="${F}" size={12} color="${c.textTertiary}">${email}</Text>
+    <Text font="${F}" weight="400" size={14} color="${c.textSecondary}">${role}</Text>
+    <Text font="${F}" weight="400" size={12} color="${c.textTertiary}">${email}</Text>
   </Frame>${actionsJsx}
 </Frame>`;
   }
@@ -1736,7 +1761,7 @@ components.contactform = {
   <Frame name="TextArea" w="fill" flex="col" gap={4}>
     <Text font="${F}" size={14} weight="400" color="${c.textSecondary}">Message</Text>
     <Frame w="fill" h={120} flex="col" p={12} bg="${c.bgPaper}" stroke="${c.border}" strokeWidth={1} rounded={${radius('input')}}>
-      <Text font="${F}" size={14} color="${c.textDisabled}">Tell us how we can help...</Text>
+      <Text font="${F}" weight="400" size={14} color="${c.textDisabled}">Tell us how we can help...</Text>
     </Frame>
   </Frame>${alertJsx}
   <Frame w="fill" flex="row" justify="end" gap={12}>
