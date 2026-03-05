@@ -1,16 +1,16 @@
 /**
- * Design System Binder
+ * CDS Design System Binder
  *
  * Post-creation binding engine. After a component is rendered as a visual frame
  * with hardcoded hex values, this module generates Figma eval code that:
  *
  * 1. Walks the frame tree
- * 2. Matches fills/strokes to known color variables
+ * 2. Matches fills/strokes to known CDS color variables
  * 3. Binds them to Figma Variables (so they update when variables change)
  * 4. Applies Figma Text Styles to text nodes
  * 5. Can convert the frame to a Figma Component
  *
- * This is the bridge between "looks right" and "linked to the design system".
+ * Source of truth: https://github.com/rahulbhide-opengov/CDS-Design-System
  */
 
 import dsEngine from './ds-engine.js';
@@ -19,27 +19,22 @@ const { loadTokens, resolveToken, toHex } = dsEngine;
 
 /**
  * Build a reverse map: hex color → variable name (without -- prefix).
- * Used to match rendered hex fills back to the variable they came from.
+ * Covers all CDS color tokens including primary/secondary scales,
+ * grey scale, semantic colors, state colors, and component colors.
  */
 export function buildReverseColorMap() {
   const { categories } = loadTokens();
   const map = {};
 
-  for (const [key, val] of Object.entries(categories.colors || {})) {
-    const hex = toHex(val);
-    if (hex && hex.startsWith('#')) {
-      const varName = key.replace(/^--/, '');
-      const normalized = hex.toLowerCase();
-      if (!map[normalized]) map[normalized] = varName;
-    }
-  }
-
-  for (const [key, val] of Object.entries(categories.components || {})) {
-    const hex = toHex(val);
-    if (hex && hex.startsWith('#')) {
-      const varName = key.replace(/^--/, '');
-      const normalized = hex.toLowerCase();
-      if (!map[normalized]) map[normalized] = varName;
+  for (const catName of ['colors', 'components']) {
+    const cat = categories[catName] || {};
+    for (const [key, val] of Object.entries(cat)) {
+      const hex = toHex(val);
+      if (hex && hex.startsWith('#')) {
+        const varName = key.replace(/^--/, '');
+        const normalized = hex.toLowerCase();
+        if (!map[normalized]) map[normalized] = varName;
+      }
     }
   }
 
@@ -47,7 +42,9 @@ export function buildReverseColorMap() {
 }
 
 /**
- * Build a typography style map: "fontSize|fontWeight" → style name
+ * Build a typography style map: "fontSize|fontWeight" → style name.
+ * Covers all CDS typography categories including headings, body, button,
+ * chip, avatar, table, alert, dialog, badge, tooltip, stepper, etc.
  */
 export function buildTypographyMap() {
   const { categories } = loadTokens();
@@ -55,29 +52,57 @@ export function buildTypographyMap() {
   const styles = {};
 
   const styleGroups = [
+    // Headings
     'heading/h1', 'heading/h2', 'heading/h3', 'heading/h4', 'heading/h5', 'heading/h6',
+    // Display
+    'display/1', 'display/2', 'display/3', 'display/4', 'display/5',
+    // Body
     'body/large', 'body/medium', 'body/small',
-    'label/large', 'label/medium', 'label/small',
-    'caption',
+    // Subtitles
+    'subtitle/1', 'subtitle/2',
+    // Input
+    'input/label/small', 'input/label/medium', 'input/label/large',
+    'input/value/small', 'input/value/medium', 'input/value/large',
+    'input/helper', 'input/description',
+    // Caption & Overline
+    'caption', 'overline',
+    // Button
     'button/large', 'button/medium', 'button/small',
+    // Chip
+    'chip/large', 'chip/medium', 'chip/small',
+    // Avatar
+    'avatar/large', 'avatar/medium', 'avatar/small',
+    // Table
+    'table/header', 'table/cell', 'table/footer',
+    // Alert
+    'alert/title', 'alert/description',
+    // Dialog
+    'dialog/title', 'dialog/content',
+    // Badge, Tooltip, Stepper, Slider
+    'badge', 'tooltip', 'stepper/label', 'slider/value-label',
+    // Menu Item
+    'menu-item/default', 'menu-item/dense',
+    // Bottom Nav
+    'bottom-nav/actions', 'bottom-nav/default',
+    // Helper text
+    'helper-text',
   ];
 
   for (const styleName of styleGroups) {
     const sizeKey = `--typography/${styleName}/font-size`;
     const weightKey = `--typography/${styleName}/font-weight`;
     const lineHeightKey = `--typography/${styleName}/line-height`;
-    const familyKey = `--typography/${styleName}/font-family`;
 
     const size = typo[sizeKey];
     const weight = typo[weightKey];
     if (size && weight) {
       const key = `${parseInt(size)}|${weight}`;
       styles[key] = {
-        name: `DS/${styleName}`,
+        name: `CDS/${styleName}`,
         fontSize: parseInt(size),
         fontWeight: weight,
         lineHeight: lineHeightKey && typo[lineHeightKey] ? parseFloat(typo[lineHeightKey]) : null,
-        fontFamily: familyKey && typo[familyKey] ? typo[familyKey] : 'DM Sans',
+        fontFamily: 'DM Sans',
       };
     }
   }
@@ -86,7 +111,7 @@ export function buildTypographyMap() {
 }
 
 /**
- * Generate Figma eval code that creates all Text Styles from the design system.
+ * Generate Figma eval code that creates all CDS Text Styles.
  */
 export function generateTextStylesCode() {
   const typoMap = buildTypographyMap();
@@ -96,37 +121,32 @@ export function generateTextStylesCode() {
   lines.push(`  let created = 0;`);
 
   for (const [, style] of Object.entries(typoMap)) {
-    const fontStyle = parseInt(style.fontWeight) >= 700 ? 'Bold'
-      : parseInt(style.fontWeight) >= 500 ? 'Medium' : 'Regular';
-
-    const cleanFamily = style.fontFamily.replace(/['"]/g, '').split(',')[0].trim();
+    const w = parseInt(style.fontWeight);
+    const fontStyle = w >= 700 ? 'Bold' : w >= 600 ? 'SemiBold' : w >= 500 ? 'Medium' : 'Regular';
 
     lines.push(`  if (!existingNames.has(${JSON.stringify(style.name)})) {`);
     lines.push(`    try {`);
-    lines.push(`      await figma.loadFontAsync({ family: ${JSON.stringify(cleanFamily)}, style: ${JSON.stringify(fontStyle)} });`);
+    lines.push(`      await figma.loadFontAsync({ family: 'DM Sans', style: ${JSON.stringify(fontStyle)} });`);
     lines.push(`      const s = figma.createTextStyle();`);
     lines.push(`      s.name = ${JSON.stringify(style.name)};`);
-    lines.push(`      s.fontName = { family: ${JSON.stringify(cleanFamily)}, style: ${JSON.stringify(fontStyle)} };`);
+    lines.push(`      s.fontName = { family: 'DM Sans', style: ${JSON.stringify(fontStyle)} };`);
     lines.push(`      s.fontSize = ${style.fontSize};`);
-    if (style.lineHeight) {
-      const lhValue = style.lineHeight > 4 ? style.lineHeight : style.fontSize * style.lineHeight;
-      lines.push(`      s.lineHeight = { value: ${Math.round(lhValue)}, unit: 'PIXELS' };`);
+    if (style.lineHeight && style.lineHeight > 4) {
+      lines.push(`      s.lineHeight = { value: ${Math.round(style.lineHeight)}, unit: 'PIXELS' };`);
     }
     lines.push(`      created++;`);
     lines.push(`    } catch(e) {}`);
     lines.push(`  }`);
   }
 
-  lines.push(`  return 'Created ' + created + ' text styles';`);
+  lines.push(`  return 'Created ' + created + ' CDS text styles';`);
   lines.push(`})()`);
   return lines.join('\n');
 }
 
 /**
  * Generate Figma eval code that binds all fills/strokes in a frame tree
- * to their matching Figma Variables, and applies Text Styles to text nodes.
- *
- * @param {string} frameName - Name of the frame to bind (finds most recent match)
+ * to their matching CDS Figma Variables, and applies Text Styles.
  */
 export function generateBindingCode(frameName) {
   const reverseMap = buildReverseColorMap();
@@ -134,29 +154,22 @@ export function generateBindingCode(frameName) {
 
   const lines = [`(async function() {`];
 
-  // Find the frame
   lines.push(`  const target = figma.currentPage.children`);
   lines.push(`    .filter(n => n.name === ${JSON.stringify(frameName)} || n.name.startsWith(${JSON.stringify(frameName + '/')}))`);
   lines.push(`    .pop();`);
   lines.push(`  if (!target) return 'Frame not found: ${frameName}';`);
 
-  // Get all local variables for matching
   lines.push(`  const allVars = figma.variables.getLocalVariables('COLOR');`);
   lines.push(`  const floatVars = figma.variables.getLocalVariables('FLOAT');`);
   lines.push(`  const textStyles = figma.getLocalTextStyles();`);
 
-  // Build lookup helpers
   lines.push(`  function findVar(name) { return allVars.find(v => v.name === name); }`);
   lines.push(`  function findFloatVar(name) { return floatVars.find(v => v.name === name); }`);
   lines.push(`  function findTextStyle(name) { return textStyles.find(s => s.name === name); }`);
 
-  // Color hex to variable name map (injected from Node.js side)
   lines.push(`  const colorMap = ${JSON.stringify(reverseMap)};`);
-
-  // Typography map
   lines.push(`  const typoMap = ${JSON.stringify(typoMap)};`);
 
-  // Figma RGB to hex helper
   lines.push(`  function rgbToHex(c) {`);
   lines.push(`    if (!c) return '';`);
   lines.push(`    const r = Math.round((c.r || 0) * 255);`);
@@ -165,7 +178,6 @@ export function generateBindingCode(frameName) {
   lines.push(`    return '#' + [r,g,b].map(x => x.toString(16).padStart(2,'0')).join('');`);
   lines.push(`  }`);
 
-  // Recursive binding walker
   lines.push(`  let boundColors = 0, boundStrokes = 0, boundText = 0, boundRadius = 0;`);
   lines.push(`  function walkAndBind(node) {`);
 
@@ -178,11 +190,7 @@ export function generateBindingCode(frameName) {
   lines.push(`        if (varName) {`);
   lines.push(`          const v = findVar(varName);`);
   lines.push(`          if (v) {`);
-  lines.push(`            try {`);
-  lines.push(`              const newFill = figma.variables.setBoundVariableForPaint(fill, 'color', v);`);
-  lines.push(`              node.fills = [newFill];`);
-  lines.push(`              boundColors++;`);
-  lines.push(`            } catch(e) {}`);
+  lines.push(`            try { const nf = figma.variables.setBoundVariableForPaint(fill, 'color', v); node.fills = [nf]; boundColors++; } catch(e) {}`);
   lines.push(`          }`);
   lines.push(`        }`);
   lines.push(`      }`);
@@ -197,21 +205,18 @@ export function generateBindingCode(frameName) {
   lines.push(`        if (varName) {`);
   lines.push(`          const v = findVar(varName);`);
   lines.push(`          if (v) {`);
-  lines.push(`            try {`);
-  lines.push(`              const newStroke = figma.variables.setBoundVariableForPaint(stroke, 'color', v);`);
-  lines.push(`              node.strokes = [newStroke];`);
-  lines.push(`              boundStrokes++;`);
-  lines.push(`            } catch(e) {}`);
+  lines.push(`            try { const ns = figma.variables.setBoundVariableForPaint(stroke, 'color', v); node.strokes = [ns]; boundStrokes++; } catch(e) {}`);
   lines.push(`          }`);
   lines.push(`        }`);
   lines.push(`      }`);
   lines.push(`    }`);
 
-  // Bind corner radius to variable if it matches a known token
+  // Bind corner radius
   lines.push(`    if ('cornerRadius' in node && typeof node.cornerRadius === 'number') {`);
   lines.push(`      const rVarNames = [`);
-  lines.push(`        'border-radius/small', 'border-radius/medium', 'border-radius/button',`);
-  lines.push(`        'border-radius/large', 'border-radius/xl', 'border-radius/pill'`);
+  lines.push(`        'border-radius/extra-small', 'border-radius/small', 'border-radius/medium',`);
+  lines.push(`        'border-radius/large', 'border-radius/button', 'border-radius/input',`);
+  lines.push(`        'border-radius/card', 'border-radius/chip', 'border-radius/dialog'`);
   lines.push(`      ];`);
   lines.push(`      for (const rn of rVarNames) {`);
   lines.push(`        const fv = findFloatVar(rn);`);
@@ -230,19 +235,16 @@ export function generateBindingCode(frameName) {
 
   // Apply text styles
   lines.push(`    if (node.type === 'TEXT') {`);
-  lines.push(`      const key = node.fontSize + '|' + (node.fontWeight || (node.fontName ? (node.fontName.style === 'Bold' ? '700' : node.fontName.style === 'Medium' ? '500' : '400') : '400'));`);
+  lines.push(`      const key = node.fontSize + '|' + (node.fontWeight || (node.fontName ? (node.fontName.style === 'Bold' ? '700' : node.fontName.style === 'SemiBold' ? '600' : node.fontName.style === 'Medium' ? '500' : '400') : '400'));`);
   lines.push(`      const match = typoMap[key];`);
   lines.push(`      if (match) {`);
   lines.push(`        const ts = findTextStyle(match.name);`);
   lines.push(`        if (ts) {`);
-  lines.push(`          try {`);
-  lines.push(`            node.textStyleId = ts.id;`);
-  lines.push(`            boundText++;`);
-  lines.push(`          } catch(e) {}`);
+  lines.push(`          try { node.textStyleId = ts.id; boundText++; } catch(e) {}`);
   lines.push(`        }`);
   lines.push(`      }`);
 
-  // Also bind text fills to color variables
+  // Bind text fills
   lines.push(`      if (node.fills && Array.isArray(node.fills) && node.fills.length > 0) {`);
   lines.push(`        const fill = node.fills[0];`);
   lines.push(`        if (fill.type === 'SOLID' && fill.color) {`);
@@ -251,18 +253,14 @@ export function generateBindingCode(frameName) {
   lines.push(`          if (varName) {`);
   lines.push(`            const v = findVar(varName);`);
   lines.push(`            if (v) {`);
-  lines.push(`              try {`);
-  lines.push(`                const newFill = figma.variables.setBoundVariableForPaint(fill, 'color', v);`);
-  lines.push(`                node.fills = [newFill];`);
-  lines.push(`                boundColors++;`);
-  lines.push(`              } catch(e) {}`);
+  lines.push(`              try { const nf = figma.variables.setBoundVariableForPaint(fill, 'color', v); node.fills = [nf]; boundColors++; } catch(e) {}`);
   lines.push(`            }`);
   lines.push(`          }`);
   lines.push(`        }`);
   lines.push(`      }`);
   lines.push(`    }`);
 
-  // Recurse into children
+  // Recurse
   lines.push(`    if ('children' in node) {`);
   lines.push(`      for (const child of node.children) { walkAndBind(child); }`);
   lines.push(`    }`);
@@ -295,9 +293,9 @@ export function generateComponentConversionCode(frameName) {
  * Returns an array of { label, code } objects to run in sequence.
  */
 export function generateFullSetupSteps() {
-  return [
-    { label: 'Creating text styles', code: generateTextStylesCode() },
-  ];
+  const steps = dsEngine.generateFullVariablePushCode();
+  steps.push({ label: 'Creating CDS text styles', code: generateTextStylesCode() });
+  return steps;
 }
 
 export default {

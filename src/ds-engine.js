@@ -1,9 +1,11 @@
 /**
  * Design System Engine
  *
- * Loads tokens from design-system-tokens.ts and resolves them
+ * Loads CDS tokens from design-system/tokens.ts and resolves them
  * for use in Figma component generation. This is the bridge between
- * your design system spec and Figma's API.
+ * the CDS Design System spec and Figma's API.
+ *
+ * Source of truth: https://github.com/rahulbhide-opengov/CDS-Design-System
  */
 
 import { readFileSync, existsSync } from 'fs';
@@ -14,7 +16,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_TOKEN_PATH = resolve(__dirname, '../design-system/tokens.ts');
 
-// Raw token data extracted from design-system-tokens.ts
 let _tokensCache = null;
 let _tokenFilePath = null;
 
@@ -82,24 +83,19 @@ function extractTokenMap(src, varName) {
   const block = src.slice(start, end);
   const tokens = {};
 
-  // Line-by-line parsing handles complex values with nested quotes
   const lines = block.split('\n');
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('/*')) continue;
 
-    // Match: 'key': 'value'  or  'key': "value"  (key always starts with --)
     const keyMatch = trimmed.match(/^['"](-{2}[^'"]+)['"]\s*:\s*/);
     if (!keyMatch) continue;
 
     const key = keyMatch[1];
     const rest = trimmed.slice(keyMatch[0].length);
 
-    // Extract value: find the opening quote, then capture everything until
-    // we find the matching closing quote followed by comma or end
     const quoteChar = rest[0];
     if (quoteChar === "'" || quoteChar === '"') {
-      // Find matching close: scan for the quote char that's followed by , or end-of-content
       let valueEnd = -1;
       for (let i = 1; i < rest.length; i++) {
         if (rest[i] === quoteChar && (i + 1 >= rest.length || rest[i + 1] === ',' || rest[i + 1] === ' ' || rest[i + 1] === '\n')) {
@@ -111,7 +107,6 @@ function extractTokenMap(src, varName) {
         tokens[key] = rest.slice(1, valueEnd);
       }
     } else {
-      // Numeric or unquoted value
       const numMatch = rest.match(/^(\d+(?:\.\d+)?)/);
       if (numMatch) {
         tokens[key] = numMatch[1];
@@ -219,8 +214,7 @@ export function px(tokenNameOrValue) {
 
 /**
  * Convert a hex or rgba color to Figma-compatible hex.
- * For rgba with alpha < 1, blend against white background
- * to produce a visually accurate solid color.
+ * For rgba with alpha < 1, blend against white background.
  */
 export function toHex(tokenNameOrValue) {
   const val = resolveToken(tokenNameOrValue) || tokenNameOrValue;
@@ -228,7 +222,6 @@ export function toHex(tokenNameOrValue) {
 
   if (String(val).startsWith('#')) return val;
 
-  // Parse rgba(r, g, b, a)
   const rgbaMatch = String(val).match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\)/);
   if (rgbaMatch) {
     let r = parseInt(rgbaMatch[1]);
@@ -236,7 +229,6 @@ export function toHex(tokenNameOrValue) {
     let b = parseInt(rgbaMatch[3]);
     const a = rgbaMatch[4] !== undefined ? parseFloat(rgbaMatch[4]) : 1;
 
-    // Blend with white background for semi-transparent colors
     if (a < 1) {
       r = Math.round(r * a + 255 * (1 - a));
       g = Math.round(g * a + 255 * (1 - a));
@@ -257,6 +249,36 @@ export function getOpacity(tokenNameOrValue) {
   const rgbaMatch = String(val).match(/rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\)/);
   if (rgbaMatch) return parseFloat(rgbaMatch[1]);
   return 1;
+}
+
+/**
+ * Get raw rgba components { r, g, b, a } from a token (normalized 0-1 for Figma).
+ */
+export function toFigmaColor(tokenNameOrValue) {
+  const val = resolveToken(tokenNameOrValue) || tokenNameOrValue;
+  if (!val) return { r: 0, g: 0, b: 0, a: 1 };
+
+  if (String(val).startsWith('#')) {
+    const hex = String(val).replace('#', '');
+    return {
+      r: parseInt(hex.substr(0, 2), 16) / 255,
+      g: parseInt(hex.substr(2, 2), 16) / 255,
+      b: parseInt(hex.substr(4, 2), 16) / 255,
+      a: 1,
+    };
+  }
+
+  const rgbaMatch = String(val).match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\)/);
+  if (rgbaMatch) {
+    return {
+      r: parseInt(rgbaMatch[1]) / 255,
+      g: parseInt(rgbaMatch[2]) / 255,
+      b: parseInt(rgbaMatch[3]) / 255,
+      a: rgbaMatch[4] !== undefined ? parseFloat(rgbaMatch[4]) : 1,
+    };
+  }
+
+  return { r: 0, g: 0, b: 0, a: 1 };
 }
 
 /**
@@ -293,6 +315,10 @@ export function searchTokens(query) {
 /**
  * Generate Figma variable creation code for a category of tokens.
  * Returns JS code string for Figma eval.
+ *
+ * Handles:
+ * - COLOR variables from hex (#xxx) and rgba() values (preserves alpha as opacity)
+ * - FLOAT variables from numeric px values
  */
 export function generateFigmaVariableCode(categoryName, collectionName) {
   const tokens = getCategory(categoryName);
@@ -302,7 +328,10 @@ export function generateFigmaVariableCode(categoryName, collectionName) {
     k.includes('color') || k.includes('Color') ||
     String(tokens[k]).startsWith('#') || String(tokens[k]).startsWith('rgba')
   );
-  const floatTokenKeys = Object.keys(tokens).filter(k => !colorTokenKeys.includes(k));
+  const floatTokenKeys = Object.keys(tokens).filter(k =>
+    !colorTokenKeys.includes(k) && !String(tokens[k]).includes('cubic-bezier') &&
+    !String(tokens[k]).includes('uppercase')
+  );
 
   const lines = [`(async function() {`];
   lines.push(`  const collections = figma.variables.getLocalVariableCollections();`);
@@ -314,7 +343,6 @@ export function generateFigmaVariableCode(categoryName, collectionName) {
   lines.push(`  const existingNames = new Set(existing.map(v => v.name));`);
   lines.push(`  let created = 0;`);
 
-  // Helper for hex -> Figma RGB
   lines.push(`  function hexToRgb(hex) {`);
   lines.push(`    hex = hex.replace('#', '');`);
   lines.push(`    return { r: parseInt(hex.substr(0,2),16)/255, g: parseInt(hex.substr(2,2),16)/255, b: parseInt(hex.substr(4,2),16)/255 };`);
@@ -328,6 +356,7 @@ export function generateFigmaVariableCode(categoryName, collectionName) {
   for (const key of colorTokenKeys) {
     const val = tokens[key];
     const varName = key.replace(/^--/, '');
+    if (String(val) === 'transparent' || String(val) === 'none') continue;
     lines.push(`  if (!existingNames.has(${JSON.stringify(varName)})) {`);
     lines.push(`    try {`);
     lines.push(`      const v = figma.variables.createVariable(${JSON.stringify(varName)}, colId, 'COLOR');`);
@@ -335,7 +364,7 @@ export function generateFigmaVariableCode(categoryName, collectionName) {
       lines.push(`      v.setValueForMode(modeId, hexToRgb(${JSON.stringify(val)}));`);
     } else if (String(val).startsWith('rgba')) {
       lines.push(`      const c = rgbaToFigma(${JSON.stringify(val)});`);
-      lines.push(`      if (c) v.setValueForMode(modeId, { r: c.r, g: c.g, b: c.b });`);
+      lines.push(`      if (c) v.setValueForMode(modeId, { r: c.r, g: c.g, b: c.b, ...(c.a < 1 ? { a: c.a } : {}) });`);
     }
     lines.push(`      created++;`);
     lines.push(`    } catch(e) {}`);
@@ -379,7 +408,7 @@ export function generateDarkModeCode(collectionName) {
   lines.push(`  const modeId = darkMode.modeId;`);
   lines.push(`  const vars = figma.variables.getLocalVariables('COLOR').filter(v => v.variableCollectionId === col.id);`);
   lines.push(`  function hexToRgb(hex) { hex = hex.replace('#',''); return { r: parseInt(hex.substr(0,2),16)/255, g: parseInt(hex.substr(2,2),16)/255, b: parseInt(hex.substr(4,2),16)/255 }; }`);
-  lines.push(`  function rgbaToFigma(str) { const m = str.match(/rgba?\\((\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)(?:\\s*,\\s*([\\d.]+))?\\)/); if (!m) return null; return { r: parseInt(m[1])/255, g: parseInt(m[2])/255, b: parseInt(m[3])/255 }; }`);
+  lines.push(`  function rgbaToFigma(str) { const m = str.match(/rgba?\\((\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)(?:\\s*,\\s*([\\d.]+))?\\)/); if (!m) return null; return { r: parseInt(m[1])/255, g: parseInt(m[2])/255, b: parseInt(m[3])/255, a: m[4] ? parseFloat(m[4]) : 1 }; }`);
   lines.push(`  let updated = 0;`);
 
   for (const [key, val] of Object.entries(darkTokens)) {
@@ -389,7 +418,7 @@ export function generateDarkModeCode(collectionName) {
     if (String(val).startsWith('#')) {
       lines.push(`      v.setValueForMode(modeId, hexToRgb(${JSON.stringify(val)})); updated++;`);
     } else if (String(val).startsWith('rgba')) {
-      lines.push(`      const c = rgbaToFigma(${JSON.stringify(val)}); if (c) { v.setValueForMode(modeId, c); updated++; }`);
+      lines.push(`      const c = rgbaToFigma(${JSON.stringify(val)}); if (c) { v.setValueForMode(modeId, { r: c.r, g: c.g, b: c.b, ...(c.a < 1 ? { a: c.a } : {}) }); updated++; }`);
     }
     lines.push(`    }`);
     lines.push(`  }`);
@@ -398,6 +427,28 @@ export function generateDarkModeCode(collectionName) {
   lines.push(`  return 'Updated ' + updated + ' dark mode values in ' + ${JSON.stringify(collectionName)};`);
   lines.push(`})()`);
   return lines.join('\n');
+}
+
+/**
+ * Generate code to push ALL CDS tokens as Figma variables to a file.
+ * Creates separate collections for Colors, Typography, Sizing, Spacing, etc.
+ */
+export function generateFullVariablePushCode() {
+  const steps = [];
+
+  steps.push({ label: 'Pushing CDS color variables', code: generateFigmaVariableCode('colors', 'CDS Colors') });
+  steps.push({ label: 'Pushing CDS spacing variables', code: generateFigmaVariableCode('spacing', 'CDS Spacing') });
+  steps.push({ label: 'Pushing CDS sizing variables', code: generateFigmaVariableCode('sizing', 'CDS Sizing') });
+  steps.push({ label: 'Pushing CDS border radius variables', code: generateFigmaVariableCode('borderRadius', 'CDS Border Radius') });
+  steps.push({ label: 'Pushing CDS z-index variables', code: generateFigmaVariableCode('zIndex', 'CDS Z-Index') });
+  steps.push({ label: 'Pushing CDS component variables', code: generateFigmaVariableCode('components', 'CDS Components') });
+
+  const darkCode = generateDarkModeCode('CDS Colors');
+  if (darkCode) {
+    steps.push({ label: 'Adding dark mode to CDS Colors', code: darkCode });
+  }
+
+  return steps.filter(s => s.code);
 }
 
 export default {
@@ -409,9 +460,11 @@ export default {
   getColorGroup,
   px,
   toHex,
+  toFigmaColor,
   getOpacity,
   getTokenStats,
   searchTokens,
   generateFigmaVariableCode,
   generateDarkModeCode,
+  generateFullVariablePushCode,
 };

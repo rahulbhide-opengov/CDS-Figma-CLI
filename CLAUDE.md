@@ -209,11 +209,11 @@ No patching or Full Disk Access is required for the pipe method to work. The CLI
 
 **IMPORTANT:** Once a file is selected, **stick with it for the entire session**. Never re-ask, never switch unless the user explicitly requests it.
 
-### Design System Tokens
+### CDS Design System Tokens
 
 | User says | You run |
 |-----------|---------|
-| "Push tokens to Figma" / "Create design variables" / "Set up the design system" | `node src/index.js ds tokens push` |
+| "Push tokens to Figma" / "Set up design system" / "Push variables" | `node src/index.js ds setup` |
 | "Push just the colors" / "Create color variables" | `node src/index.js ds tokens push --category colors` |
 | "Push spacing tokens" | `node src/index.js ds tokens push --category spacing` |
 | "Add dark mode" / "Create dark theme" | `node src/index.js ds tokens push-dark` |
@@ -222,6 +222,16 @@ No patching or Full Disk Access is required for the pipe method to work. The CLI
 | "Show me all colors" / "List the color tokens" | `node src/index.js ds tokens list -c colors` |
 | "Show spacing scale" | `node src/index.js ds tokens list -c spacing` |
 | "Show typography tokens" | `node src/index.js ds tokens list -c typography` |
+
+**IMPORTANT:** `ds setup` is the one-command way to push ALL CDS tokens (464 tokens) to a Figma file. It creates:
+- **CDS Colors** collection — Blurple primary scale (50-900), Slate secondary scale (50-900), grey scale, semantic colors (error, warning, success, info), state colors, backdrop/overlays + dark mode
+- **CDS Spacing** collection — 4px base unit scale (0-96px)
+- **CDS Sizing** collection — button, input, chip, avatar, icon, table sizes
+- **CDS Border Radius** collection — none/extraSmall/small/medium/large + component-specific
+- **CDS Components** collection — component-specific measurements
+- **CDS Text Styles** — all DM Sans typography styles (heading, body, button, chip, table, etc.)
+
+After setup, all designs created with `ds create` are automatically bound to these variables.
 
 ### Token Lookups
 
@@ -259,11 +269,20 @@ When users ask for something that requires multiple components, compose them:
 
 For truly custom layouts not covered by any component, use the `render` command with CDS token values:
 ```bash
-node src/index.js render '<Frame name="Custom" w={1200} flex="col" bg="#ffffff" p={32} gap={24} rounded={12}>
-  <Text size={24} weight="700" color="#212121" font="DM Sans">Custom Section</Text>
-  <Text size={14} color="#666666" w="fill">Use CDS token values: primary=#4b3fff, spacing=multiples of 4px</Text>
+node src/index.js render '<Frame name="Custom" w={1200} flex="col" bg="#fafafa" p={32} gap={24} rounded={4}>
+  <Text size={24} weight="600" color="#212121" font="DM Sans">Custom Section</Text>
+  <Text size={14} color="#546574" w="fill">CDS: primary=#4b3fff, secondary=#546574, weight=600 headings, 500 buttons, 4px radius</Text>
 </Frame>'
 ```
+
+**CDS Quick Reference for Custom Renders:**
+- Primary (Blurple): `#4b3fff` — Secondary (Slate): `#546574`
+- Error: `#d32f2f` — Warning: `#ed6c02` — Success: `#2e7d32` — Info: `#0288d1`
+- Background: `#fafafa` — Paper: `#ffffff` — Grey scale: `#fafafa` to `#212121`
+- Heading weight: `600` — Button weight: `500` — Body weight: `400`
+- Border radius: `4` (buttons, cards, inputs) — `2` (chips) — `8` (medium containers)
+- Button heights: S=28, M=32, L=40 — Input heights: S=28, M=32, L=40
+- Font: `DM Sans` — Spacing: multiples of `4px`
 
 ---
 
@@ -557,11 +576,11 @@ Try asking:
 
 When user asks to "create a website", "design a landing page", or similar:
 
-### Step 1: Create Design System First
+### Step 1: Push CDS Design System to Figma
 ```bash
-node src/index.js tokens ds
+node src/index.js ds setup
 ```
-This creates IDS Base colors: gray, primary (blue), accent (purple), plus semantic colors.
+This pushes all CDS tokens: Blurple primary (50-900), Slate secondary (50-900), grey scale, semantic colors, spacing, sizing, border radius, text styles, and dark mode.
 
 ### Step 2: Create Page Frame with Sections Inside
 
@@ -1127,9 +1146,9 @@ node src/index.js arrange -g 100 -c 3     # 3 columns
 
 ### Design Tokens & Variables
 
-"Create a design system"
+"Create a design system" / "Push CDS to Figma"
 ```bash
-node src/index.js tokens ds
+node src/index.js ds setup
 ```
 
 "Add Tailwind/shadcn primitive colors" (slate, gray, blue, red, etc. with 50-950 shades)

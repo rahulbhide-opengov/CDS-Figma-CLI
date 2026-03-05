@@ -4649,31 +4649,20 @@ ds
     await checkConnection();
     console.log(chalk.white('\n  Setting up CDS Design System in Figma...\n'));
 
-    // Step 1: Push all token variables
-    const step1 = ora('Step 1/3: Pushing design tokens as Figma variables...').start();
-    const categoryMap = {
-      colors: { collection: 'DS - Colors', category: 'colors' },
-      typography: { collection: 'DS - Typography', category: 'typography' },
-      spacing: { collection: 'DS - Spacing', category: 'spacing' },
-      sizing: { collection: 'DS - Sizing', category: 'sizing' },
-      borderRadius: { collection: 'DS - Border Radius', category: 'borderRadius' },
-      elevation: { collection: 'DS - Elevation', category: 'elevation' },
-      components: { collection: 'DS - Components', category: 'components' },
-    };
-
+    // Step 1: Push all CDS token variables
+    const step1 = ora('Step 1/3: Pushing CDS design tokens as Figma variables...').start();
+    const varSteps = dsEngine.generateFullVariablePushCode();
     let totalVars = 0;
-    for (const [, config] of Object.entries(categoryMap)) {
+    for (const vs of varSteps) {
       try {
-        const code = dsEngine.generateFigmaVariableCode(config.category, config.collection);
-        if (!code) continue;
-        const result = figmaEvalSync(code);
+        const result = figmaEvalSync(vs.code);
         if (result) {
-          const match = String(result).match(/Created (\d+)/);
+          const match = String(result).match(/(?:Created|Updated) (\d+)/);
           if (match) totalVars += parseInt(match[1]);
         }
       } catch {}
     }
-    step1.succeed(`Step 1/3: ${totalVars} variables created`);
+    step1.succeed(`Step 1/3: ${totalVars} CDS variables created`);
 
     // Step 2: Create text styles
     const step2 = ora('Step 2/3: Creating text styles...').start();
@@ -4689,7 +4678,7 @@ ds
     if (!options.skipDark) {
       const step3 = ora('Step 3/3: Adding dark mode...').start();
       try {
-        const darkCode = dsEngine.generateDarkModeCode('DS - Colors');
+        const darkCode = dsEngine.generateDarkModeCode('CDS Colors');
         if (darkCode) {
           const darkResult = figmaEvalSync(darkCode);
           step3.succeed(`Step 3/3: ${String(darkResult).trim()}`);
