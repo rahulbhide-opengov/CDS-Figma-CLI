@@ -93,32 +93,61 @@ This CLI includes the **CDS (Corporate Design System)** with 322 tokens and 26 r
 
 ---
 
-## CRITICAL: Design System Setup (First Time Per File)
+## CRITICAL: One-Command Design System Setup
 
-**Before creating any components**, run the design system setup once per Figma file. This creates the variables, text styles, and dark mode that components will bind to.
+**`ds setup` is the single command that sets up EVERYTHING in the Figma file.** Run it once per file, and the entire CDS design system is ready — variables, styles, dark mode, responsive modes, and component library.
 
 ```bash
 node src/index.js ds setup
 ```
 
-This single command does:
-1. **Pushes all 322 tokens** as Figma Variables (organized into collections: Colors, Typography, Spacing, Sizing, Border Radius, Elevation, Components)
-2. **Creates Figma Text Styles** (heading/h1–h6, body/large–small, label, caption, button sizes)
-3. **Adds dark mode** to the color collection
+This one command creates:
+
+1. **616+ Figma Variables** in 8 collections — with **Desktop/Tablet/Mobile responsive modes** for Sizing, Spacing, and Typography collections:
+   - **CDS Colors** — Blurple/Slate scales, semantic colors, opacity variants, state colors, component colors
+   - **CDS Spacing** — 4px base scale (0–96px) with responsive modes (64px desktop → 56px tablet → 44px mobile)
+   - **CDS Sizing** — button/input/chip/table/avatar/fab heights with responsive modes (button 28→32→32, input 32→36→40, table 50→56→64)
+   - **CDS Typography** — font-size/line-height variables with responsive modes (h5 16→18→18, body 14→16→16, display1 60→72→64)
+   - **CDS Border Radius** — none through circular + component-specific radii
+   - **CDS Z-Index** — stacking order from mobileStepper to tooltip
+   - **CDS Components** — component measurements (timeline, stepper, datepicker, nav, etc.)
+   - **CDS Breakpoints** — xs through xl + Figma design sizes
+
+2. **50+ CDS Text Styles** (DM Sans) — display(1–5), heading(h1–h6), body(lg/md/sm/xs), subtitle, button, chip, avatar, table, alert, dialog, badge, tooltip, stepper, slider, rating, menu-item, bottom-nav, caption, overline
+
+3. **Dark mode** added to CDS Colors collection (text, background, action, state colors)
+
+4. **54 CDS components** rendered and converted to Figma Components — Buttons, Forms, Layout, Navigation, Data Display, Feedback, Branding (all linked to variables)
 
 ### When to run `ds setup`:
 - **First time** you connect to a new Figma file → run it automatically
-- **User says** "set up the design system" / "push tokens" / "initialize" → run it
+- **User says** "set up the design system" / "push tokens" / "initialize" / "set up everything" → run it
 - **If bindings fail** (components show "No variables found") → run it again
 
+### Options
+| Flag | Effect |
+|------|--------|
+| `--skip-dark` | Skip dark mode creation |
+| `--skip-components` | Skip component library (only push variables + styles) |
+| `--skip-styles` | Skip text style creation |
+| `--components-only` | Only create the component library (skip variables/styles) |
+
+### Responsive Modes
+After setup, switch between **Desktop / Tablet / Mobile** in Figma's variable panel to see:
+- Button heights change (28→32→44px)
+- Input fields grow for touch targets (32→40→48px)
+- Table rows expand (50→56→64px)
+- Typography scales up for readability (body 14→16px, display 60→72px)
+- Spacing scales down on mobile (64→44px, 96→60px)
+
 ### Automatic Binding
-After `ds setup` is done, every component you create with `ds create` will **automatically**:
+After `ds setup`, every component you create with `ds create` will **automatically**:
 - Bind fill colors to Figma Color Variables (e.g., `colors/primary/main`)
 - Bind stroke colors to Figma Color Variables (e.g., `colors/border/default`)
 - Bind corner radii to Figma Float Variables (e.g., `border-radius/button`)
 - Apply Figma Text Styles to text layers (e.g., `DS/button/medium`)
 
-This means: change a variable value in Figma → all components using it update automatically.
+Change a variable value → all components using it update automatically.
 
 ### Manual Binding & Component Conversion
 - `node src/index.js ds bind "Frame Name"` — bind an existing frame to variables
@@ -126,10 +155,12 @@ This means: change a variable value in Figma → all components using it update 
 
 | User says | You run |
 |-----------|---------|
-| "Set up the design system" / "Initialize tokens" / "Push variables" | `node src/index.js ds setup` |
+| "Set up the design system" / "Initialize tokens" / "Push variables" / "Set up everything" | `node src/index.js ds setup` |
+| "Only push variables and styles (no components)" | `node src/index.js ds setup --skip-components` |
+| "Only create components" | `node src/index.js ds setup --components-only` |
+| "Set up without dark mode" | `node src/index.js ds setup --skip-dark` |
 | "Bind this frame to the design system" | `node src/index.js ds bind "Frame Name"` |
 | "Make this a component" / "Convert to component" | `node src/index.js ds to-component "Frame Name"` |
-| "Set up without dark mode" | `node src/index.js ds setup --skip-dark` |
 
 ---
 
@@ -269,18 +300,7 @@ No patching or Full Disk Access is required for the pipe method to work. The CLI
 | "Show spacing scale" | `node src/index.js ds tokens list -c spacing` |
 | "Show typography tokens" | `node src/index.js ds tokens list -c typography` |
 
-**IMPORTANT:** `ds setup` is the one-command way to push ALL CDS tokens (616+ tokens) to a Figma file. It creates:
-- **CDS Colors** collection — Blurple primary scale (50-900), Slate secondary scale (50-900), grey scale (50-900 + A-values), semantic colors (error, warning, success, info with light/dark/alternate), text/background/action/divider colors, primary/secondary state colors (hover/selected/focus/focusVisible/outlinedBorder), backdrop/overlay colors, ALL opacity variants (primary/secondary/error/success/warning/info at 4-100%), alert severity backgrounds, read-only/disabled states, component-specific colors (breadcrumb, chip, timeline, stepper, datepicker, nav, table) + **dark mode** (text, background, action, state colors)
-- **CDS Spacing** collection — 4px base unit scale (0–96px, 23 values) with **Desktop/Tablet/Mobile modes** (large values scale down: 64→56→44, 80→72→52, etc.)
-- **CDS Sizing** collection — button, input, chip, chipInField, avatar, fab, table, icon, app-bar, drawer, dialog, pagination, rating, slider, badge, tab, menu-item, list-item + touch target minimum — with **Desktop/Tablet/Mobile modes** (button 28/32/40 → tablet 32/36/44 → mobile 32/36/44; input 28/32/40 → 32/36/44 → 32/40/48; table 50→56→64)
-- **CDS Typography** collection — 50+ font-size/line-height/letter-spacing variables with **Desktop/Tablet/Mobile modes** (h5 16→18→18, body 14→16→16, display1 60→72→64, input values scale up on mobile, chip text 12→14→16)
-- **CDS Border Radius** collection — none/extraSmall/small/medium/large/circular/full + component-specific (button, input, card, chip, dialog, tooltip, alert, paper, fab, skeleton, avatar)
-- **CDS Z-Index** collection — mobileStepper through tooltip stacking order
-- **CDS Components** collection — measurements for timeline, stepper, datepicker, table, nav, breadcrumb, chip, form, dialog, tooltip, snackbar, alert, slider, app-bar, bottom-nav, menu, file-upload, transfer-list, logo, wand, pagination, rating
-- **CDS Breakpoints** collection — responsive breakpoints (xs–xl + Figma design sizes)
-- **CDS Text Styles** — 50+ DM Sans typography styles: display (1–5), heading (h1–h6), body (large/medium/small/extra-small), subtitle (1–2), button (s/m/l), chip (s/m/l), avatar (s/m/l), table (header/cell/footer), alert (title/description), dialog (title/content), badge, tooltip, stepper, slider, rating, menu-item (default/dense), bottom-nav (actions/default), helper-text, caption, overline
-
-After setup, all designs created with `ds create` are automatically bound to these variables. Switch between Desktop/Tablet/Mobile modes in Figma's variable panel to see values adapt responsively.
+**IMPORTANT:** `ds setup` is the ONE command that sets up the entire CDS Design System. See the "One-Command Design System Setup" section above for full details. It creates 616+ variables (with responsive modes), 50+ text styles, dark mode, and 54 CDS components — all linked together. After setup, every component you create is automatically bound to these variables and styles.
 
 ### Token Lookups
 
