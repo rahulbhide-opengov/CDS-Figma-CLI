@@ -302,19 +302,6 @@ function startFigma(port = DEFAULT_DEBUG_PORT) {
   setFigmaPort(port);
 }
 
-function killFigma() {
-  try {
-    if (IS_MAC) {
-      execSync('pkill -x Figma 2>/dev/null || true', { stdio: 'pipe' });
-    } else if (IS_WINDOWS) {
-      execSync('taskkill /IM Figma.exe /F 2>nul', { stdio: 'pipe' });
-    } else {
-      execSync('pkill -x figma 2>/dev/null || true', { stdio: 'pipe' });
-    }
-  } catch (e) {
-    // Ignore errors if Figma wasn't running
-  }
-}
 
 /**
  * Check if Figma debug port is reachable (auto-detects port).
