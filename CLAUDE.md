@@ -97,7 +97,16 @@ This CLI includes the **CDS (Corporate Design System)** with 322 tokens and 26 r
 
 **The CLI automatically asks the user** whether to push the CDS Design System when connecting to a Figma file for the first time. This happens once per file — the CLI tracks which files have been set up and won't ask again.
 
-**What the user sees after `connect`:**
+### IMPORTANT: Agent Behavior for the CDS Prompt
+
+**DO NOT skip, kill, or bypass the CDS prompt.** When the `connect` command shows the "Push CDS Design System to this file? (y/n)" prompt:
+
+1. **WAIT for the user's response** — do NOT kill the process or send input on behalf of the user
+2. **Set `block_until_ms` high enough** (at least 120000ms / 2 minutes) so the shell doesn't background while waiting for input
+3. **Only the user decides** — never assume y or n
+4. The prompt will **keep asking** until it gets a valid y/n answer
+
+### What the user sees after `connect`:
 ```
   ┌──────────────────────────────────────────────────────┐
   │  CDS Design System — Push to this Figma file?         │
@@ -109,7 +118,11 @@ This CLI includes the **CDS (Corporate Design System)** with 322 tokens and 26 r
   Push CDS Design System to this file? (y/n):
 ```
 
-If the user says **yes**, the full setup runs automatically. If **no**, they can run it later manually:
+### If user says YES:
+The full setup runs automatically — 616+ variables, text styles, dark mode, 47 components all pushed and linked in the Figma file.
+
+### If user says NO:
+**Designs still use CDS values.** All colors, typography, sizing, spacing, and component styling come from the CDS token system. They just won't be linked to Figma variables — the values are baked into the rendered elements. The user can link them anytime later:
 
 ```bash
 node src/index.js ds setup

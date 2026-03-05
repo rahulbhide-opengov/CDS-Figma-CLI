@@ -1283,12 +1283,21 @@ program
       console.log(chalk.white('  and 47 components — so every design you create uses the CDS system'));
       console.log(chalk.white('  and stays in sync when tokens change.'));
       console.log('');
-      const answer = await prompt(chalk.yellow('  Push CDS Design System to this file? (y/n): '));
-      if (answer.trim().toLowerCase() === 'y' || answer.trim().toLowerCase() === 'yes') {
+      let answer = '';
+      while (!['y', 'yes', 'n', 'no'].includes(answer.trim().toLowerCase())) {
+        answer = await prompt(chalk.yellow('  Push CDS Design System to this file? (y/n): '));
+        if (!['y', 'yes', 'n', 'no'].includes(answer.trim().toLowerCase())) {
+          console.log(chalk.gray('  Please type y or n.'));
+        }
+      }
+      if (['y', 'yes'].includes(answer.trim().toLowerCase())) {
         console.log('');
         await runDsSetup({ skipDark: false, skipComponents: false, skipStyles: false });
       } else {
-        console.log(chalk.gray('\n  Skipped. You can run it later with: ds setup\n'));
+        console.log('');
+        console.log(chalk.green('  ✓ No problem! All designs will still use CDS colors, typography,'));
+        console.log(chalk.green('    sizing, and components — they just won\'t be linked to Figma variables.'));
+        console.log(chalk.gray('    You can link them anytime later with: ds setup\n'));
       }
     } else {
       console.log(chalk.green('  ✓ CDS Design System already set up for this file'));
